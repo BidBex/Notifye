@@ -1,0 +1,122 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      hosted_url:
+        description: 'Optional HTTPS URL for hosted WKWebView wrapper (leave blank to bundle dist/)'
+        required: false
+        default: ''
+
+jobs:
+  build_ipa:
+    name: Build Notifye iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Configure Capacitor hosted URL (optional)
+        if: ${{ github.event.inputs.hosted_url != '' }}
+        env:
+          HOSTED_URL: ${{ github.event.inputs.hosted_url }}
+        run: |
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('capacitor.config.json', 'utf8'));
+            cfg.server = { url: process.env.HOSTED_URL, cleartext: false };
+            fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg, null, 2));
+          "
+
+      - name: Add and sync Capacitor iOS project
+        run: |
+          npm install --no-save @capacitor/core @capacitor/cli @capacitor/ios
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
+          npx cap sync ios
+
+      - name: Configure iOS Info.plist, WidgetKit extension & AppIcon
+        run: |
+          if [ -f "ios-widget/setup-ios-widget.rb" ]; then
+            gem install --no-document xcodeproj
+            ruby ios-widget/setup-ios-widget.rb
+          fi
+
+          PLIST_PATH="ios/App/App/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Notifye" "$PLIST_PATH" || \
+            /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Notifye" "$PLIST_PATH"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName Notifye" "$PLIST_PATH" || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.notifye.app" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string notifye" "$PLIST_PATH" 2>/dev/null || true
+
+          ICON_DEST="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          if [ -f "public/pwa-512x512.png" ] && [ -d "$ICON_DEST" ]; then
+            sips -z 1024 1024 public/pwa-512x512.png --out "$ICON_DEST/AppIcon-512@2x.png"
+            cat > "$ICON_DEST/Contents.json" << 'EOF'
+          {
+            "images" : [
+              {
+                "filename" : "AppIcon-512@2x.png",
+                "idiom" : "universal",
+                "platform" : "ios",
+                "size" : "1024x1024"
+              }
+            ],
+            "info" : {
+              "author" : "xcode",
+              "version" : 1
+            }
+          }
+          EOF
+          fi
+
+      - name: Archive unsigned iOS app
+        run: |
+          if [ -d "ios/App/App.xcworkspace" ]; then
+            XC_ARG=(-workspace ios/App/App.xcworkspace)
+          else
+            XC_ARG=(-project ios/App/App.xcodeproj)
+          fi
+          xcodebuild \
+            "${XC_ARG[@]}" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Notifye.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package Notifye-unsigned.ipa
+        run: |
+          mkdir -p build/ipa/Payload
+          APP_PATH=$(find build/Notifye.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -n 1)
+          cp -R "$APP_PATH" build/ipa/Payload/Notifye.app
+          cd build/ipa
+          zip -r -y Notifye-unsigned.ipa Payload
+
+      - name: Upload Notifye-unsigned.ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Notifye-iOS-IPA
+          path: build/ipa/Notifye-unsigned.ipa
