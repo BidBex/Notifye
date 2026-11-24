@@ -1,0 +1,13 @@
+{
+  "appId": "com.notifye.app",
+  "appName": "Notifye",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "ios": {
+    "contentInset": "automatic",
+    "allowsLinkPreview": false,
+    "scrollEnabled": true,
+    "backgroundColor": "#0B0B0F",
+    "preferredContentMode": "mobile"
+  }
+}

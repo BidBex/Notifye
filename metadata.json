@@ -1,0 +1,6 @@
+{
+  "name": "Tether",
+  "description": "A quiet, mobile-first space for two partners. Link accounts with a pairing code and send real-time 'Think of me' attention alerts, custom moment cards, and thoughtful notes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
