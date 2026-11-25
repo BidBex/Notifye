@@ -34,7 +34,12 @@ To show your partner's name and send in the background, the widget reads the pai
 
 - **While the app is open:** a banner, a sound and a vibration.
 - **While the app is in the background:** a system notification, for as long as the phone keeps the app running.
-- **When the app is fully closed:** this needs a push server (see [Limitations](#limitations)).
+- **When the app is fully closed (free, iPhone and Android):** set this up once in **Notifications → Notifications when the app is closed**:
+  1. Install the free **ntfy** app ([App Store](https://apps.apple.com/app/ntfy/id1625396347), [Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy)).
+  2. Subscribe to your private topic. On Android, tap **Subscribe**. On iPhone, copy the topic, then in ntfy tap **+**, paste it and tap **Subscribe**.
+  3. Tap **Send test**, then switch on **Get your partner's taps through ntfy**.
+
+  Each person does this on their own phone. After that, every tap also goes to the partner's ntfy topic, and ntfy shows it as a normal notification even when Notifye is closed. During a burst of fast taps, the first tap arrives right away and the rest are combined into one follow-up ("+3 more"), because ntfy.sh allows about one message every 5 seconds and 250 a day per phone.
 
 ## How it works
 
@@ -51,7 +56,8 @@ To show your partner's name and send in the background, the widget reads the pai
   - `NotifyeWidgetBridge`, a Capacitor plugin that shares the pairing state with the widget.
   - `NotifyeBridgeViewController`, which registers that plugin and hides the status bar.
   - The widget sends a ping itself with Firestore's REST API.
-- **Android:** `android-native/MainActivity.java` replaces the generated activity to run full screen (immersive).
+- **Android:** `android-native/MainActivity.java` replaces the generated activity. It runs the app full screen (immersive) and keeps text at 100% size. It also passes the real camera-cutout and gesture-bar sizes to the page, because Android WebView doesn't report safe areas reliably.
+- **Closed-app notifications:** `src/utils/closedAppPush.ts` publishes each ping to the partner's [ntfy](https://ntfy.sh) topic. The topic is a long random string, and the partner's phone reads it from Firestore (`pairs/{pairId}/devices/{uid}`). The iOS widget publishes the same way.
 
 ### Project layout
 
@@ -96,8 +102,8 @@ npm run lint         # type check (tsc --noEmit)
 
 ## Limitations
 
-- **Notifications when the app is fully closed** need a push server, which this project doesn't have yet.
-  - **Android:** this needs Firebase Cloud Messaging plus a sender, such as a Cloud Function. Cloud Functions require Firebase's pay-as-you-go **Blaze** plan.
-  - **iPhone:** this also needs Apple push (APNs), which requires a paid Apple Developer account. Apps signed with a free Apple ID can't receive push notifications.
+- **Closed-app notifications go through ntfy.** Notifye itself can't receive push notifications, because Apple only allows that for apps signed with a paid developer account. ntfy is a separate free app that already has that permission, so it delivers the notification instead, and tapping it opens ntfy, not Notifye.
+  - Messages pass through the public ntfy.sh server. Only someone who knows your long topic can read them.
+  - The free tier allows 250 messages a day per phone.
 - **Android signing:** the APK is signed with a temporary debug key that changes on each CI build. Updating to a newer build may mean uninstalling the old one first, which deletes the phone's saved name and pairing.
 - **No Android widget yet.**

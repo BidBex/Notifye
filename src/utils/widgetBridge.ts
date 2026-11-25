@@ -30,6 +30,8 @@ export interface WidgetSyncPayload {
   buttonBottomHex: string;
   buttonInkHex: string;
   buttonShape: string;
+  /** Partner's ntfy topic for closed-app notifications ('' if they haven't turned it on). */
+  partnerPushTopic: string;
   updatedAtMs: number;
 }
 
@@ -58,8 +60,9 @@ export async function syncNativeWidgetState(params: {
   profile: UserProfile;
   pair: PairDoc | null;
   themePrefs: StudioThemePrefs;
+  partnerPushTopic: string;
 }): Promise<void> {
-  const { refreshToken, profile, pair, themePrefs } = params;
+  const { refreshToken, profile, pair, themePrefs, partnerPushTopic } = params;
   const isActive = Boolean(pair && pair.status === 'active');
   const partnerName = isActive && pair
     ? (pair.partnerAUid === profile.uid ? pair.partnerBName : pair.partnerAName) || 'Partner'
@@ -88,6 +91,7 @@ export async function syncNativeWidgetState(params: {
     buttonBottomHex: shiftHex(buttonColor, -14),
     buttonInkHex: getContrastInk(buttonColor),
     buttonShape: themePrefs.buttonShape,
+    partnerPushTopic: isActive ? partnerPushTopic : '',
     updatedAtMs: Date.now(),
   };
 

@@ -27,6 +27,8 @@ struct NotifyeWidgetState: Codable {
     var buttonBottomHex: String? = nil
     var buttonInkHex: String? = nil
     var buttonShape: String? = nil
+    /// Partner's ntfy topic for notifications while their app is closed ('' / nil if off).
+    var partnerPushTopic: String? = nil
 
     static let placeholder = NotifyeWidgetState(
         apiKey: "",
@@ -90,6 +92,7 @@ struct SendNotifyePingIntent: AppIntent {
         do {
             let idToken = try await exchangeRefreshToken(apiKey: state.apiKey, refreshToken: state.refreshToken)
             try await commitFirestorePing(state: state, idToken: idToken, isUrgent: isUrgent)
+            await sendClosedAppPush(state: state, isUrgent: isUrgent)
             defaults?.set(
                 isUrgent ? "Priority sent to \(state.partnerName)" : "Sent to \(state.partnerName)",
                 forKey: NotifyeShared.lastStatusKey
@@ -101,6 +104,27 @@ struct SendNotifyePingIntent: AppIntent {
 
         WidgetCenter.shared.reloadAllTimelines()
         return .result()
+    }
+
+    /// Same as sendClosedAppPush() in src/utils/closedAppPush.ts: publish to the partner's ntfy topic.
+    private func sendClosedAppPush(state: NotifyeWidgetState, isUrgent: Bool) async {
+        guard
+            let topic = state.partnerPushTopic,
+            topic.range(of: "^notifye-[a-z0-9]{24}$", options: .regularExpression) != nil,
+            let url = URL(string: "https://ntfy.sh")
+        else { return }
+        let body: [String: Any] = [
+            "topic": topic,
+            "title": isUrgent ? "Priority from \(state.displayName)" : state.displayName,
+            "message": isUrgent ? state.priorityMessage : state.normalMessage,
+            "priority": isUrgent ? 5 : 4,
+            "tags": [isUrgent ? "rotating_light" : "bell"],
+        ]
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 10
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     private func exchangeRefreshToken(apiKey: String, refreshToken: String) async throws -> String {
