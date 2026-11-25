@@ -158,7 +158,7 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
     isPressedRef.current = true;
     urgentTriggeredRef.current = false;
     setIsPressed(true);
-    setIsHovering(true);
+    if (e.pointerType === 'mouse') setIsHovering(true);
     const { ox, oy } = updatePointerTracking(e.clientX, e.clientY);
 
     // Immediate touch feedback: Vibration API + chosen touch animation
@@ -230,13 +230,17 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
 
   const dimensionClass =
     size === 'sm'
-      ? 'w-36 h-36 sm:w-40 sm:h-40'
+      ? 'w-[min(9rem,42vw)] h-[min(9rem,42vw)] sm:w-40 sm:h-40'
       : size === 'md'
-      ? 'w-44 h-44 sm:w-48 sm:h-48'
-      : 'w-56 h-56 sm:w-64 sm:h-64';
+      ? 'w-[min(11rem,50vw)] h-[min(11rem,50vw)] sm:w-48 sm:h-48'
+      : 'w-[min(14rem,60vw)] h-[min(14rem,60vw)] sm:w-64 sm:h-64';
   const radiusClass = shape === 'squircle' ? 'rounded-[44px]' : 'rounded-full';
   const auraSizeClass =
-    size === 'sm' ? 'w-48 h-48' : size === 'md' ? 'w-60 h-60' : 'w-80 h-80';
+    size === 'sm'
+      ? 'w-[min(12rem,56vw)] h-[min(12rem,56vw)]'
+      : size === 'md'
+      ? 'w-[min(15rem,70vw)] h-[min(15rem,70vw)]'
+      : 'w-[min(20rem,86vw)] h-[min(20rem,86vw)]';
 
   const baseRadiusPx = size === 'sm' ? 76 : size === 'md' ? 94 : 124;
 
@@ -365,11 +369,13 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
         type="button"
         disabled={sending}
         onPointerEnter={(e) => {
+          if (e.pointerType !== 'mouse') return;
           setIsHovering(true);
           updatePointerTracking(e.clientX, e.clientY);
         }}
         onPointerMove={(e) => {
-          if (!isHovering) setIsHovering(true);
+          if (e.pointerType !== 'mouse' && !isPressedRef.current) return;
+          if (e.pointerType === 'mouse' && !isHovering) setIsHovering(true);
           updatePointerTracking(e.clientX, e.clientY);
         }}
         onPointerDown={handlePointerDown}

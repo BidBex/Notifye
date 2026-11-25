@@ -124,9 +124,11 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
   useEffect(() => {
     if (pings.length === 0 && !incomingAlert) return;
     setNowMs(Date.now());
+    // 1 s tick (was 200 ms, which re-rendered the whole studio 5x/second).
+    // Progress bars animate smoothly between ticks with a 1 s CSS transition.
     const id = window.setInterval(() => {
       setNowMs(Date.now());
-    }, 200);
+    }, 1000);
     return () => window.clearInterval(id);
   }, [pings.length, incomingAlert]);
 
@@ -255,16 +257,15 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
 
   return (
     <div
-      className="min-h-screen text-[#F5F5F7] flex flex-col transition-colors duration-500"
+      className={`min-h-dvh px-safe text-[#F5F5F7] flex flex-col transition-colors duration-500 ${themePrefs.showHeader ? '' : 'pt-safe'}`}
       style={{ backgroundColor: ambient.effectiveBg }}
     >
       {/* Optional Compact Single-Row Top Bar */}
       {themePrefs.showHeader && (
         <header
-          className="sticky top-0 z-30 backdrop-blur-md border-b border-white/[0.06]"
+          className="sticky top-0 z-30 pt-safe border-b border-white/[0.06]"
           style={{
-            backgroundColor: hexToRgba(ambient.effectiveBg, 0.85),
-            filter: ambient.isNightActive ? `brightness(${ambient.uiBrightness})` : undefined,
+            backgroundColor: hexToRgba(ambient.effectiveBg, 0.96),
           }}
         >
           <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 h-12 flex items-center justify-between gap-4">
@@ -335,11 +336,16 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
 
       {/* Customizable Main Canvas */}
       <main
-        className={`flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-16 flex flex-col transition-[filter] duration-500 ${mainJustifyClass}`}
-        style={{
-          filter: ambient.isNightActive ? `brightness(${ambient.uiBrightness})` : undefined,
-        }}
+        className={`flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-6 pb-main-safe flex flex-col ${mainJustifyClass}`}
       >
+        {/* Night dimming: a static overlay is far cheaper than filter: brightness() on the content */}
+        {ambient.isNightActive && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed inset-0 z-[25] bg-black transition-opacity duration-500"
+            style={{ opacity: Math.max(0, Math.min(0.6, 1 - ambient.uiBrightness)) }}
+          />
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
           {/* Focal Button Section */}
           <section
@@ -601,7 +607,7 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
                               style={{
                                 backgroundColor: pingAccent,
                                 transform: `scaleX(${progress})`,
-                                transition: 'transform 180ms linear',
+                                transition: 'transform 1000ms linear',
                               }}
                             />
                           </div>
@@ -696,7 +702,7 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
             backgroundColor: hexToRgba(ambient.effectiveBg, 0.88),
             pointerEvents: bottomBarOpen ? 'auto' : 'none',
           }}
-          className="relative w-full z-20 backdrop-blur-xl border-t border-white/[0.08]"
+          className="relative w-full z-20 pb-safe border-t border-white/[0.08]"
         >
           <div
             className={`w-full max-w-md mx-auto h-[54px] px-2 grid items-center ${
@@ -784,7 +790,7 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
 
       {/* Unpair Confirmation Modal */}
       {confirmUnpair && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4">
           <div className="w-full max-w-sm rounded-2xl bg-[#14151B] border border-white/10 p-6 space-y-4">
             <h3 className="font-display text-xl font-medium text-zinc-100">
               Unlink from {partnerName}?
