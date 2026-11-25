@@ -66,6 +66,9 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Notifye" "$PLIST_PATH" || \
             /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Notifye" "$PLIST_PATH"
           /usr/libexec/PlistBuddy -c "Set :CFBundleName Notifye" "$PLIST_PATH" || true
+          # Full screen: hide the status bar (also at launch)
+          /usr/libexec/PlistBuddy -c "Delete :UIStatusBarHidden" "$PLIST_PATH" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIStatusBarHidden bool true" "$PLIST_PATH"
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$PLIST_PATH" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$PLIST_PATH" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLName string com.notifye.app" "$PLIST_PATH" 2>/dev/null || true
@@ -166,6 +169,8 @@ jobs:
           if [ ! -d "android" ]; then
             npx cap add android
           fi
+          # Full-screen (immersive) activity
+          cp android-native/MainActivity.java android/app/src/main/java/com/notifye/app/MainActivity.java
           npx cap sync android
 
       - name: Set Android app icon

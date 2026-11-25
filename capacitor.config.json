@@ -12,7 +12,7 @@
   },
   "android": {
     "backgroundColor": "#0B0B0F",
-    "adjustMarginsForEdgeToEdge": "auto",
+    "adjustMarginsForEdgeToEdge": "disable",
     "allowMixedContent": false
   }
 }

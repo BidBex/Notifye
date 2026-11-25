@@ -22,6 +22,11 @@ struct NotifyeWidgetState: Codable {
     var normalMessage: String
     var priorityMessage: String
     var defaultUrgent: Bool
+    // Exact in-app button look (optional so older saved state still decodes)
+    var buttonTopHex: String? = nil
+    var buttonBottomHex: String? = nil
+    var buttonInkHex: String? = nil
+    var buttonShape: String? = nil
 
     static let placeholder = NotifyeWidgetState(
         apiKey: "",
@@ -267,20 +272,43 @@ struct NotifyeProvider: TimelineProvider {
 @available(iOS 17.0, *)
 private struct Palette {
     let accent: Color
+    let buttonTop: Color
+    let buttonBottom: Color
     let bg: Color
     let bgTop: Color
     let ink: Color
+    let isSquircle: Bool
     let priority = Color(hex: "#FB7185")
 
     init(state: NotifyeWidgetState) {
         accent = Color(hex: state.buttonColorHex)
+        buttonTop = state.buttonTopHex.map { Color(hex: $0) } ?? accent.blend(with: .white, by: 0.1)
+        buttonBottom = state.buttonBottomHex.map { Color(hex: $0) } ?? accent.blend(with: .black, by: 0.06)
         bg = Color(hex: state.backgroundColorHex)
         bgTop = Color(hex: state.backgroundColorHex).blend(with: .white, by: 0.08)
-        ink = Color(hex: state.buttonColorHex).isLight ? Color(hex: "#0B0B0F") : .white
+        if let inkHex = state.buttonInkHex {
+            ink = Color(hex: inkHex)
+        } else {
+            ink = accent.isLight ? Color(hex: "#0B0B0F") : .white
+        }
+        isSquircle = state.buttonShape == "squircle"
     }
 
     var background: some View {
         LinearGradient(colors: [bgTop, bg], startPoint: .top, endPoint: .bottom)
+    }
+
+    /// Same vertical gradient as the in-app button: top tint → colour at 60% → bottom tint.
+    var buttonFill: LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: buttonTop, location: 0),
+                .init(color: accent, location: 0.6),
+                .init(color: buttonBottom, location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 
@@ -317,23 +345,35 @@ struct NotifyeWidgetView: View {
         }
     }
 
+    /// Paired: runs the send intent in place. Not paired / no shared state: opens Notifye via
+    /// widgetURL, and the app sends the notification.
+    @ViewBuilder
+    private func tapToSend<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        if entry.isPaired {
+            Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) { content() }
+                .buttonStyle(.plain)
+        } else {
+            content()
+        }
+    }
+
     // Lock Screen: round
     private var circular: some View {
-        Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) {
+        tapToSend {
             ZStack {
                 AccessoryWidgetBackground()
                 Image(systemName: entry.showStatus && !entry.statusIsError ? "checkmark" : "bell.fill")
                     .font(.system(size: 20, weight: .semibold))
             }
         }
-        .buttonStyle(.plain)
         .widgetAccentable()
+        .widgetURL(entry.isPaired ? nil : NotifyeLinks.send(urgent: entry.state.defaultUrgent))
         .containerBackground(.clear, for: .widget)
     }
 
     // Lock Screen: wide
     private var rectangular: some View {
-        Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) {
+        tapToSend {
             HStack(spacing: 8) {
                 Image(systemName: entry.showStatus && !entry.statusIsError ? "checkmark.circle.fill" : "bell.badge.fill")
                     .font(.system(size: 22, weight: .semibold))
@@ -341,7 +381,7 @@ struct NotifyeWidgetView: View {
                     Text(entry.isPaired ? "Notify \(partner)" : "Notifye")
                         .font(.headline)
                         .lineLimit(1)
-                    Text(entry.showStatus ? entry.lastStatus : (entry.isPaired ? "Tap to send" : "Open the app to pair"))
+                    Text(entry.showStatus ? entry.lastStatus : (entry.isPaired ? "Tap to send" : "Tap to send via app"))
                         .font(.caption2)
                         .lineLimit(1)
                         .opacity(0.8)
@@ -349,8 +389,8 @@ struct NotifyeWidgetView: View {
                 Spacer(minLength: 0)
             }
         }
-        .buttonStyle(.plain)
         .widgetAccentable()
+        .widgetURL(entry.isPaired ? nil : NotifyeLinks.send(urgent: entry.state.defaultUrgent))
         .containerBackground(.clear, for: .widget)
     }
 
@@ -370,22 +410,19 @@ struct NotifyeWidgetView: View {
 
             if entry.isPaired {
                 Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) {
-                    sendCircle(diameter: 74)
+                    sendCircle(diameter: 78)
                 }
                 .buttonStyle(.plain)
             } else {
-                Image(systemName: "link")
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(palette.accent)
-                    .frame(width: 74, height: 74)
-                    .background(palette.accent.opacity(0.14), in: Circle())
+                // No shared state yet: tapping opens Notifye, which sends the notification.
+                sendCircle(diameter: 78)
             }
 
             Spacer(minLength: 6)
 
-            statusLine(default: entry.isPaired ? entry.state.buttonLabel : "Open Notifye to pair")
+            statusLine(default: entry.isPaired ? entry.state.buttonLabel : "Tap to send via app")
         }
-        .widgetURL(entry.isPaired ? nil : URL(string: "notifye://open"))
+        .widgetURL(entry.isPaired ? nil : NotifyeLinks.send(urgent: entry.state.defaultUrgent))
         .containerBackground(for: .widget) { palette.background }
     }
 
@@ -406,54 +443,56 @@ struct NotifyeWidgetView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                statusLine(default: entry.isPaired ? "Tap to let them know" : "Open Notifye to pair", alignLeading: true)
+                statusLine(default: entry.isPaired ? "Tap to let them know" : "Opens Notifye to send", alignLeading: true)
             }
 
             Spacer(minLength: 0)
 
-            if entry.isPaired {
-                HStack(spacing: 8) {
-                    Button(intent: SendNotifyePingIntent(isUrgent: false)) {
-                        actionTile(
-                            icon: entry.showStatus && !entry.statusIsError ? "checkmark" : "bell.fill",
-                            title: entry.state.buttonLabel,
-                            fill: palette.accent,
-                            ink: palette.ink,
-                            width: 84
-                        )
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(intent: SendNotifyePingIntent(isUrgent: true)) {
-                        actionTile(
-                            icon: "exclamationmark.2",
-                            title: "Priority",
-                            fill: palette.priority.opacity(0.2),
-                            ink: Color(hex: "#FDA4AF"),
-                            width: 66,
-                            stroke: palette.priority.opacity(0.45)
-                        )
-                    }
-                    .buttonStyle(.plain)
+            HStack(spacing: 8) {
+                let normalTile = actionTile(
+                    icon: entry.showStatus && !entry.statusIsError ? "checkmark" : "bell.fill",
+                    title: entry.state.buttonLabel,
+                    fill: AnyShapeStyle(palette.buttonFill),
+                    ink: palette.ink,
+                    width: 84,
+                    stroke: .white.opacity(0.22)
+                )
+                let priorityTile = actionTile(
+                    icon: "exclamationmark.2",
+                    title: "Priority",
+                    fill: AnyShapeStyle(palette.priority.opacity(0.2)),
+                    ink: Color(hex: "#FDA4AF"),
+                    width: 66,
+                    stroke: palette.priority.opacity(0.45)
+                )
+                if entry.isPaired {
+                    Button(intent: SendNotifyePingIntent(isUrgent: false)) { normalTile }
+                        .buttonStyle(.plain)
+                    Button(intent: SendNotifyePingIntent(isUrgent: true)) { priorityTile }
+                        .buttonStyle(.plain)
+                } else {
+                    // No shared state yet: open Notifye, which sends the notification.
+                    Link(destination: NotifyeLinks.send(urgent: false)) { normalTile }
+                    Link(destination: NotifyeLinks.send(urgent: true)) { priorityTile }
                 }
             }
         }
-        .widgetURL(entry.isPaired ? nil : URL(string: "notifye://open"))
         .containerBackground(for: .widget) { palette.background }
     }
 
     private func sendCircle(diameter: CGFloat) -> some View {
         let sent = entry.showStatus && !entry.statusIsError
+        let shape = palette.isSquircle
+            ? AnyShape(RoundedRectangle(cornerRadius: diameter * 0.3, style: .continuous))
+            : AnyShape(Circle())
         return ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [palette.accent.blend(with: .white, by: 0.25), palette.accent],
-                        center: .topLeading, startRadius: 2, endRadius: diameter
-                    )
-                )
-                .shadow(color: palette.accent.opacity(0.45), radius: 12, y: 3)
-            Circle().stroke(.white.opacity(0.25), lineWidth: 1)
+            shape
+                .fill(palette.buttonFill)
+                .shadow(color: palette.accent.opacity(0.4), radius: 12, y: 2)
+            shape.stroke(
+                LinearGradient(colors: [.white.opacity(0.4), .clear], startPoint: .top, endPoint: .center),
+                lineWidth: 1
+            )
             Image(systemName: sent ? "checkmark" : "bell.badge.fill")
                 .font(.system(size: diameter * 0.32, weight: .bold))
                 .foregroundStyle(palette.ink)
@@ -463,7 +502,7 @@ struct NotifyeWidgetView: View {
     }
 
     private func actionTile(
-        icon: String, title: String, fill: Color, ink: Color, width: CGFloat, stroke: Color = .clear
+        icon: String, title: String, fill: AnyShapeStyle, ink: Color, width: CGFloat, stroke: Color = .clear
     ) -> some View {
         VStack(spacing: 6) {
             Image(systemName: icon)
@@ -515,6 +554,14 @@ struct NotifyeQuickButtonWidget: Widget {
 struct NotifyeWidgetBundle: WidgetBundle {
     var body: some Widget {
         NotifyeQuickButtonWidget()
+    }
+}
+
+// MARK: - Deep links (handled in src/utils/deepLinks.ts)
+
+enum NotifyeLinks {
+    static func send(urgent: Bool) -> URL {
+        URL(string: urgent ? "notifye://send?kind=priority" : "notifye://send")!
     }
 }
 

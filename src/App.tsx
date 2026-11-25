@@ -6,6 +6,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  increment,
   limit,
   onSnapshot,
   query,
@@ -41,6 +42,7 @@ import { WidgetStandaloneView } from './components/WidgetStandaloneView';
 import { playWarmChime } from './utils/chime';
 import { triggerHaptic } from './utils/haptics';
 import { loadThemePrefs, resolveAmbientPalette, saveThemePrefs } from './utils/themeColors';
+import { subscribeToWidgetLinks } from './utils/deepLinks';
 import { ensureNativeNotificationPermission } from './utils/nativeNotifications';
 import { syncNativeWidgetState } from './utils/widgetBridge';
 
@@ -147,6 +149,9 @@ function TetherWorkspace() {
   const ambientPalette = useMemo(() => resolveAmbientPalette(themePrefs), [themePrefs]);
 
   const initialPingsLoadedRef = useRef(false);
+  const inFlightPingsRef = useRef(0);
+  const lastPairUpdateMsRef = useRef(0);
+  const feedbackTimerRef = useRef<number | undefined>(undefined);
   const seenPingIdsRef = useRef<Set<string>>(new Set());
   const pingAnchorMsRef = useRef<Map<string, number>>(new Map());
   const deletingPingIdsRef = useRef<Set<string>>(new Set());
@@ -833,20 +838,42 @@ function TetherWorkspace() {
       }
 
       if (!fbUser || !profile || !pair || pair.status !== 'active') return;
+      // Every tap sends its own ping right away: no waiting for the previous one, no lockout.
+      inFlightPingsRef.current += 1;
       setSendingPing(true);
       setPingError(null);
+      const partnerLabel =
+        pair.partnerAUid === fbUser.uid ? pair.partnerBName : pair.partnerAName;
+      if (soundEnabled) {
+        playWarmChime(options.kind === 'urgent_attention' ? 'urgentSend' : 'send');
+      }
+      setLastSentFeedback(
+        options.kind === 'urgent_attention'
+          ? `Priority alert sent to ${partnerLabel || 'your partner'}`
+          : `Sent to ${partnerLabel || 'your partner'}`
+      );
+      window.clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = window.setTimeout(() => setLastSentFeedback(null), 2600);
       try {
         const pingId = generateReverseTimestampId(fbUser.uid);
         pingAnchorMsRef.current.set(pingId, Date.now());
+        seenPingIdsRef.current.add(pingId);
         const batch = writeBatch(db);
 
-        batch.update(doc(db, 'pairs', pair.pairId), {
-          lastPingAt: serverTimestamp(),
-          lastPingByUid: fbUser.uid,
-          lastPingMessage: cleanMessage,
-          pingCount: (pair.pingCount || 0) + 1,
-          updatedAt: serverTimestamp(),
-        });
+        // The pair summary doc is shared, so rapid taps update it at most every 1.5 s
+        // (Firestore throttles fast repeated writes to one document). Each ping still
+        // gets its own document, which is what the partner's phone listens to.
+        const nowMs = Date.now();
+        if (nowMs - lastPairUpdateMsRef.current > 1500) {
+          lastPairUpdateMsRef.current = nowMs;
+          batch.update(doc(db, 'pairs', pair.pairId), {
+            lastPingAt: serverTimestamp(),
+            lastPingByUid: fbUser.uid,
+            lastPingMessage: cleanMessage,
+            pingCount: increment(1),
+            updatedAt: serverTimestamp(),
+          });
+        }
 
         batch.set(doc(db, 'pairs', pair.pairId, 'pings', pingId), {
           pingId,
@@ -862,20 +889,6 @@ function TetherWorkspace() {
         });
 
         await batch.commit();
-        seenPingIdsRef.current.add(pingId);
-
-        if (soundEnabled) {
-          playWarmChime(options.kind === 'urgent_attention' ? 'urgentSend' : 'send');
-        }
-
-        const partnerLabel =
-          pair.partnerAUid === fbUser.uid ? pair.partnerBName : pair.partnerAName;
-        setLastSentFeedback(
-          options.kind === 'urgent_attention'
-            ? `Priority alert sent to ${partnerLabel || 'your partner'}`
-            : `Sent to ${partnerLabel || 'your partner'}`
-        );
-        setTimeout(() => setLastSentFeedback(null), 2600);
 
         if (partnerDeviceToken) {
           void fetch('/api/notify', {
@@ -892,7 +905,8 @@ function TetherWorkspace() {
       } catch (err) {
         setPingError(err instanceof Error ? err.message : 'Could not send attention ping.');
       } finally {
-        setSendingPing(false);
+        inFlightPingsRef.current = Math.max(0, inFlightPingsRef.current - 1);
+        if (inFlightPingsRef.current === 0) setSendingPing(false);
       }
     },
     [fbUser, profile, pair, soundEnabled, partnerDeviceToken, testMode]
@@ -912,6 +926,17 @@ function TetherWorkspace() {
     }, 600);
     return () => window.clearTimeout(t);
   }, [authReady, fbUser, profile, pair, themePrefs]);
+
+  // Widget taps that open the app (notifye://send) queue the same action as ?widgetAction=.
+  const [widgetActionTick, setWidgetActionTick] = useState(0);
+  useEffect(
+    () =>
+      subscribeToWidgetLinks((action) => {
+        pendingWidgetActionRef.current = action;
+        setWidgetActionTick((t) => t + 1);
+      }),
+    []
+  );
 
   useEffect(() => {
     const action = pendingWidgetActionRef.current;
@@ -944,6 +969,7 @@ function TetherWorkspace() {
     dispatchPing,
     themePrefs.normalNotifMessage,
     themePrefs.priorityNotifMessage,
+    widgetActionTick,
   ]);
 
   const handleToggleSound = async () => {
