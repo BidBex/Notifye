@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  browserPopupRedirectResolver,
   GoogleAuthProvider,
   onAuthStateChanged,
   signInWithCredential,
@@ -29,7 +30,7 @@ import {
   showPartnerSystemNotification,
   subscribeForegroundFcm,
 } from './firebase';
-import { hasNativeGoogleSignIn, isNativeApp, nativeGoogleSignIn, nativeSignOut } from './utils/nativeAuth';
+import { hasNativeGoogleSignIn, nativeGoogleSignIn, nativeSignOut } from './utils/nativeAuth';
 import type {
   AspectRatioOption,
   AutoDeleteDuration,
@@ -510,12 +511,10 @@ function TetherWorkspace() {
       if (hasNativeGoogleSignIn()) {
         const { idToken, accessToken } = await nativeGoogleSignIn();
         cred = await signInWithCredential(auth, GoogleAuthProvider.credential(idToken, accessToken));
-      } else if (isNativeApp()) {
-        throw new Error(
-          'Google Sign-In is not configured in this iOS build. Add the GOOGLE_SERVICE_INFO_PLIST_BASE64 secret and rebuild.'
-        );
       } else {
-        cred = await signInWithPopup(auth, googleProvider);
+        // On iOS, auth is initialized without a popup resolver (it hangs app startup),
+        // so pass it here; it only loads when the user taps sign-in.
+        cred = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
       }
       try {
         localStorage.removeItem(`notifye_name_chosen_${cred.user.uid}`);
