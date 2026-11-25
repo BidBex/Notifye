@@ -54,6 +54,9 @@ unless podfile.include?('CapacitorFirebaseAuthentication/Google')
   podfile.sub!('# Add your Pods here', "# Add your Pods here\n#{pod_line}") ||
     abort("Could not find '# Add your Pods here' in #{podfile_path}")
   File.write(podfile_path, podfile)
+  # The first `cap sync` locked versions (e.g. GTMSessionFetcher 4.x) that conflict with
+  # GoogleSignIn's constraints, so re-resolve from scratch.
+  FileUtils.rm_f('ios/App/Podfile.lock')
 end
 Dir.chdir('ios/App') { system('pod', 'install') || abort('pod install failed') }
 
