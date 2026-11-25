@@ -3,12 +3,17 @@ name: Build iOS IPA
 on:
   push:
     branches: [ main ]
+  release:
+    types: [ published ]
   workflow_dispatch:
     inputs:
       hosted_url:
         description: 'Optional HTTPS URL for hosted WKWebView wrapper (leave blank to bundle dist/)'
         required: false
         default: ''
+
+permissions:
+  contents: write
 
 jobs:
   build_ipa:
@@ -120,3 +125,12 @@ jobs:
         with:
           name: Notifye-iOS-IPA
           path: build/ipa/Notifye-unsigned.ipa
+
+      - name: Attach IPA to GitHub Release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          cp build/ipa/Notifye-unsigned.ipa "build/ipa/Notifye-${TAG}-unsigned.ipa"
+          gh release upload "$TAG" "build/ipa/Notifye-${TAG}-unsigned.ipa" --clobber --repo "$GITHUB_REPOSITORY"
