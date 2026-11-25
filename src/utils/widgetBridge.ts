@@ -1,3 +1,4 @@
+import { Capacitor, registerPlugin } from '@capacitor/core';
 import firebaseConfig from '../../firebase-applet-config.json';
 import type { PairDoc, StudioThemePrefs, UserProfile } from '../types';
 
@@ -20,29 +21,25 @@ export interface WidgetSyncPayload {
   updatedAtMs: number;
 }
 
-interface CapacitorPluginBridge {
-  syncWidgetState?: (payload: WidgetSyncPayload) => Promise<void>;
-  clearWidgetState?: () => Promise<void>;
+interface NotifyeWidgetBridgePlugin {
+  syncWidgetState(payload: WidgetSyncPayload): Promise<{ appGroupAvailable?: boolean; appGroup?: string }>;
+  clearWidgetState(): Promise<void>;
 }
 
-interface CapacitorGlobal {
-  isNativePlatform?: () => boolean;
-  Plugins?: {
-    NotifyeWidgetBridge?: CapacitorPluginBridge;
-  };
-}
+// Registered natively by NotifyeBridgeViewController (iOS). Capacitor only exposes a native
+// plugin to JS through registerPlugin(); window.Capacitor.Plugins is not pre-populated.
+const NotifyeWidgetBridge = registerPlugin<NotifyeWidgetBridgePlugin>('NotifyeWidgetBridge');
 
-function getWidgetBridge(): CapacitorPluginBridge | null {
-  if (typeof window === 'undefined') return null;
-  const cap = (window as unknown as { Capacitor?: CapacitorGlobal }).Capacitor;
-  return cap?.Plugins?.NotifyeWidgetBridge ?? null;
+function widgetBridgeAvailable(): boolean {
+  return Capacitor.getPlatform() === 'ios' && Capacitor.isPluginAvailable('NotifyeWidgetBridge');
 }
 
 export function isNativeCapacitorApp(): boolean {
-  if (typeof window === 'undefined') return false;
-  const cap = (window as unknown as { Capacitor?: CapacitorGlobal }).Capacitor;
-  return Boolean(cap?.isNativePlatform?.());
+  return Capacitor.isNativePlatform();
 }
+
+/** Last sync result, so the Widgets sheet can tell the user if the widget can't see the app. */
+export let lastWidgetSync: { ok: boolean; appGroupAvailable: boolean } | null = null;
 
 export async function syncNativeWidgetState(params: {
   refreshToken: string;
@@ -91,13 +88,12 @@ export async function syncNativeWidgetState(params: {
     // ignore storage errors
   }
 
-  const bridge = getWidgetBridge();
-  if (bridge?.syncWidgetState) {
-    try {
-      await bridge.syncWidgetState(payload);
-    } catch {
-      // Ignore bridge errors on unsupported environments
-    }
+  if (!widgetBridgeAvailable()) return;
+  try {
+    const res = await NotifyeWidgetBridge.syncWidgetState(payload);
+    lastWidgetSync = { ok: true, appGroupAvailable: res?.appGroupAvailable !== false };
+  } catch {
+    lastWidgetSync = { ok: false, appGroupAvailable: false };
   }
 }
 
@@ -107,12 +103,10 @@ export async function clearNativeWidgetState(): Promise<void> {
   } catch {
     // ignore
   }
-  const bridge = getWidgetBridge();
-  if (bridge?.clearWidgetState) {
-    try {
-      await bridge.clearWidgetState();
-    } catch {
-      // ignore
-    }
+  if (!widgetBridgeAvailable()) return;
+  try {
+    await NotifyeWidgetBridge.clearWidgetState();
+  } catch {
+    // ignore
   }
 }

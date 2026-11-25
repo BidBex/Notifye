@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { onAuthStateChanged, signInAnonymously, type User } from 'firebase/auth';
 import {
   collection,
@@ -31,20 +32,42 @@ import type {
   StudioThemePrefs,
   UserProfile,
 } from './types';
-import { CustomizeSheet } from './components/CustomizeSheet';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { MobileExportSheet } from './components/MobileExportSheet';
 import { NameSetupView } from './components/NameSetupView';
-import { NotificationsSheet } from './components/NotificationsSheet';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PairedStudio } from './components/PairedStudio';
 import { PairingView } from './components/PairingView';
-import { WidgetsSheet } from './components/WidgetsSheet';
 import { WidgetStandaloneView } from './components/WidgetStandaloneView';
 import { playWarmChime } from './utils/chime';
 import { triggerHaptic } from './utils/haptics';
 import { loadThemePrefs, resolveAmbientPalette, saveThemePrefs } from './utils/themeColors';
+import { ensureNativeNotificationPermission } from './utils/nativeNotifications';
 import { syncNativeWidgetState } from './utils/widgetBridge';
+
+// Sheets are only needed once opened, so load them on demand to keep startup light
+// (the export sheet alone pulls in jszip and ~600 lines of generator templates).
+const CustomizeSheet = lazy(() =>
+  import('./components/CustomizeSheet').then((m) => ({ default: m.CustomizeSheet }))
+);
+const NotificationsSheet = lazy(() =>
+  import('./components/NotificationsSheet').then((m) => ({ default: m.NotificationsSheet }))
+);
+const WidgetsSheet = lazy(() =>
+  import('./components/WidgetsSheet').then((m) => ({ default: m.WidgetsSheet }))
+);
+const MobileExportSheet = lazy(() =>
+  import('./components/MobileExportSheet').then((m) => ({ default: m.MobileExportSheet }))
+);
+
+/** True from the first time `flag` is true; keeps a lazy sheet mounted so its close animation plays. */
+function useEverTrue(flag: boolean): boolean {
+  const [ever, setEver] = useState(flag);
+  if (flag && !ever) setEver(true);
+  return ever;
+}
+
+// The .ipa/Flutter export tools are for the web version only.
+const isNativeApp = Capacitor.isNativePlatform();
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -112,11 +135,16 @@ function TetherWorkspace() {
   const [showNotificationsSheet, setShowNotificationsSheet] = useState(false);
   const [showWidgetsSheet, setShowWidgetsSheet] = useState(false);
   const [showIpaExportSheet, setShowIpaExportSheet] = useState(false);
+  const customizeMounted = useEverTrue(showCustomizeSheet);
+  const notificationsMounted = useEverTrue(showNotificationsSheet);
+  const widgetsMounted = useEverTrue(showWidgetsSheet);
+  const exportMounted = useEverTrue(showIpaExportSheet);
   const [compactWidgetMode, setCompactWidgetMode] = useState(() => {
     if (typeof window === 'undefined') return false;
     return new URLSearchParams(window.location.search).get('widget') === 'compact';
   });
   const [themePrefs, setThemePrefs] = useState<StudioThemePrefs>(() => loadThemePrefs());
+  const ambientPalette = useMemo(() => resolveAmbientPalette(themePrefs), [themePrefs]);
 
   const initialPingsLoadedRef = useRef(false);
   const seenPingIdsRef = useRef<Set<string>>(new Set());
@@ -365,16 +393,25 @@ function TetherWorkspace() {
   }, [authReady, fbUser, profile?.pairId]);
 
   // 4. Listen to Real-Time Pings & Partner Device Token
+  // Keyed on the pair ID/status only, so pair-doc updates (lastPingAt, pingCount on every
+  // ping) and sound/haptic toggles don't tear down and re-download the listener.
+  const activePairId = pair && pair.status === 'active' ? pair.pairId : '';
+  const soundEnabledRef = useRef(soundEnabled);
+  soundEnabledRef.current = soundEnabled;
+  const hapticIntensityRef = useRef(themePrefs.incomingHapticIntensity);
+  hapticIntensityRef.current = themePrefs.incomingHapticIntensity;
+  const fbUid = fbUser?.uid ?? '';
+
   useEffect(() => {
-    if (!authReady || !fbUser || !pair || pair.status !== 'active') {
+    if (!authReady || !fbUid || !activePairId) {
       setPings([]);
       return;
     }
 
-    const pingsPath = `pairs/${pair.pairId}/pings`;
+    const pingsPath = `pairs/${activePairId}/pings`;
     const pingsQuery = query(
-      collection(db, 'pairs', pair.pairId, 'pings'),
-      where('memberUids', 'array-contains', fbUser.uid),
+      collection(db, 'pairs', activePairId, 'pings'),
+      where('memberUids', 'array-contains', fbUid),
       limit(40)
     );
 
@@ -402,14 +439,14 @@ function TetherWorkspace() {
           for (const item of items) {
             if (!seenPingIdsRef.current.has(item.pingId)) {
               seenPingIdsRef.current.add(item.pingId);
-              if (item.senderUid !== fbUser.uid) {
+              if (item.senderUid !== fbUid) {
                 const isUrgent = item.kind === 'urgent_attention';
                 setIncomingAlert(item);
                 triggerHaptic(
                   isUrgent ? 'receiveUrgent' : 'receive',
-                  themePrefs.incomingHapticIntensity
+                  hapticIntensityRef.current
                 );
-                if (soundEnabled) {
+                if (soundEnabledRef.current) {
                   playWarmChime(isUrgent ? 'receiveUrgent' : 'receive');
                 }
                 void showPartnerSystemNotification(
@@ -431,10 +468,10 @@ function TetherWorkspace() {
       (err) => handleFirestoreError(err, OperationType.LIST, pingsPath)
     );
 
-    const devicesPath = `pairs/${pair.pairId}/devices`;
+    const devicesPath = `pairs/${activePairId}/devices`;
     const devicesQuery = query(
-      collection(db, 'pairs', pair.pairId, 'devices'),
-      where('memberUids', 'array-contains', fbUser.uid)
+      collection(db, 'pairs', activePairId, 'devices'),
+      where('memberUids', 'array-contains', fbUid)
     );
 
     const unsubDevices = onSnapshot(
@@ -442,7 +479,7 @@ function TetherWorkspace() {
       (snap) => {
         const other = snap.docs
           .map((d) => d.data() as PairDeviceDoc)
-          .find((d) => d.uid !== fbUser.uid && d.fcmToken);
+          .find((d) => d.uid !== fbUid && d.fcmToken);
         setPartnerDeviceToken(other?.fcmToken ?? '');
       },
       (err) => handleFirestoreError(err, OperationType.LIST, devicesPath)
@@ -452,38 +489,54 @@ function TetherWorkspace() {
       unsubPings();
       unsubDevices();
     };
-  }, [authReady, fbUser, pair, soundEnabled, themePrefs.incomingHapticIntensity]);
+  }, [authReady, fbUid, activePairId]);
+
+  // Ask once for notification permission in the native app as soon as a pair is active.
+  useEffect(() => {
+    if (activePairId) void ensureNativeNotificationPermission();
+  }, [activePairId]);
 
   // 5. Auto-Delete Ping History (5-15s Ephemeral Window)
+  // Schedules a single timer for the next expiry instead of polling every 300 ms,
+  // which re-rendered the whole app several times a second.
   useEffect(() => {
     const ttlMs = themePrefs.autoDeleteSeconds * 1000;
     const hasItems = pings.length > 0 || testPings.length > 0 || incomingAlert !== null;
     if (!hasItems) return;
 
+    let timer: number | undefined;
     const sweepExpired = () => {
       const now = Date.now();
+      let nextExpiry = Infinity;
+      const track = (created: number) => {
+        const expiry = created + ttlMs;
+        if (expiry > now) nextExpiry = Math.min(nextExpiry, expiry);
+        return expiry <= now;
+      };
 
       if (incomingAlert) {
         const alertCreated =
           incomingAlert.clientCreatedMs ??
           (incomingAlert.createdAt?.toMillis ? incomingAlert.createdAt.toMillis() : now);
-        if (now - alertCreated >= ttlMs) {
-          setIncomingAlert(null);
-        }
+        if (track(alertCreated)) setIncomingAlert(null);
       }
 
       if (testPings.length > 0) {
-        setTestPings((prev) =>
-          prev.filter((p) => now - (p.clientCreatedMs ?? now) < ttlMs)
-        );
+        let anyExpired = false;
+        for (const p of testPings) {
+          if (track(p.clientCreatedMs ?? now)) anyExpired = true;
+        }
+        if (anyExpired) {
+          setTestPings((prev) => prev.filter((p) => now - (p.clientCreatedMs ?? now) < ttlMs));
+        }
       }
 
-      if (pair && pair.status === 'active' && pings.length > 0) {
+      if (activePairId && pings.length > 0) {
         for (const p of pings) {
-          const created = p.clientCreatedMs ?? now;
-          if (now - created >= ttlMs && !deletingPingIdsRef.current.has(p.pingId)) {
+          const expired = track(p.clientCreatedMs ?? now);
+          if (expired && !deletingPingIdsRef.current.has(p.pingId)) {
             deletingPingIdsRef.current.add(p.pingId);
-            void deleteDoc(doc(db, 'pairs', pair.pairId, 'pings', p.pingId))
+            void deleteDoc(doc(db, 'pairs', activePairId, 'pings', p.pingId))
               .catch(() => {
                 // Ignore not-found if partner client already deleted it
               })
@@ -493,12 +546,15 @@ function TetherWorkspace() {
           }
         }
       }
+
+      if (nextExpiry !== Infinity) {
+        timer = window.setTimeout(sweepExpired, Math.max(50, nextExpiry - Date.now() + 20));
+      }
     };
 
     sweepExpired();
-    const timer = window.setInterval(sweepExpired, 300);
-    return () => window.clearInterval(timer);
-  }, [themePrefs.autoDeleteSeconds, pings, testPings.length, incomingAlert, pair]);
+    return () => window.clearTimeout(timer);
+  }, [themePrefs.autoDeleteSeconds, pings, testPings, incomingAlert, activePairId]);
 
   // 6. Foreground FCM Listener
   useEffect(() => {
@@ -843,14 +899,18 @@ function TetherWorkspace() {
   );
 
   // 7. Sync state to iOS WidgetKit extension (Capacitor App Group) & handle widgetAction deep links
+  // Debounced so slider drags / typing in Customize don't hit the native bridge per keystroke.
   useEffect(() => {
     if (!authReady || !fbUser || !profile) return;
-    void syncNativeWidgetState({
-      refreshToken: fbUser.refreshToken,
-      profile,
-      pair,
-      themePrefs,
-    });
+    const t = window.setTimeout(() => {
+      void syncNativeWidgetState({
+        refreshToken: fbUser.refreshToken,
+        profile,
+        pair,
+        themePrefs,
+      });
+    }, 600);
+    return () => window.clearTimeout(t);
   }, [authReady, fbUser, profile, pair, themePrefs]);
 
   useEffect(() => {
@@ -922,7 +982,7 @@ function TetherWorkspace() {
 
   if (!authReady) {
     return (
-      <div className="min-h-screen bg-[#0B0B0F] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0B0B0F] flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-amber-500/30 border-t-amber-400 animate-spin" />
       </div>
     );
@@ -931,7 +991,7 @@ function TetherWorkspace() {
   if (!fbUser || (!profile && authError)) {
     return (
       <>
-        <div className="min-h-screen bg-[#0B0B0F] flex flex-col items-center justify-center gap-4 px-6 text-center">
+        <div className="min-h-dvh bg-[#0B0B0F] flex flex-col items-center justify-center gap-4 px-6 text-center">
           <p className="text-sm text-zinc-300 max-w-xs">{authError || 'Could not connect.'}</p>
           <button
             type="button"
@@ -948,7 +1008,7 @@ function TetherWorkspace() {
 
   if (!profile) {
     return (
-      <div className="min-h-screen bg-[#0B0B0F] flex items-center justify-center">
+      <div className="min-h-dvh bg-[#0B0B0F] flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-amber-500/30 border-t-amber-400 animate-spin" />
       </div>
     );
@@ -1069,7 +1129,7 @@ function TetherWorkspace() {
           sendingPing={sendingPing}
           lastSentFeedback={lastSentFeedback}
           error={pingError}
-          onOpenIpaExport={() => setShowIpaExportSheet(true)}
+          onOpenIpaExport={isNativeApp ? undefined : () => setShowIpaExportSheet(true)}
           isTestMode={!isActivePair && testMode}
           onExitTestMode={exitTestMode}
           onSimulateIncomingPing={handlePreviewAlert}
@@ -1084,73 +1144,83 @@ function TetherWorkspace() {
           onJoinWithCode={handleJoinWithCode}
           onUpdateName={handleUpdateDisplayName}
           onBypassPairing={enterTestMode}
-          onOpenIpaExport={() => setShowIpaExportSheet(true)}
+          onOpenIpaExport={isNativeApp ? undefined : () => setShowIpaExportSheet(true)}
           busy={pairBusy}
           error={pairError}
         />
       )}
 
-      <CustomizeSheet
-        open={showCustomizeSheet}
-        onClose={() => setShowCustomizeSheet(false)}
-        prefs={themePrefs}
-        onChange={handleUpdateThemePrefs}
-      />
+      <Suspense fallback={null}>
+        {customizeMounted && (
+          <CustomizeSheet
+            open={showCustomizeSheet}
+            onClose={() => setShowCustomizeSheet(false)}
+            prefs={themePrefs}
+            onChange={handleUpdateThemePrefs}
+          />
+        )}
 
-      <NotificationsSheet
-        open={showNotificationsSheet}
-        onClose={() => setShowNotificationsSheet(false)}
-        pings={activePings}
-        currentUid={profile.uid}
-        accentColor={resolveAmbientPalette(themePrefs).effectiveButton}
-        backgroundColor={resolveAmbientPalette(themePrefs).effectiveBg}
-        prefs={themePrefs}
-        onUpdatePrefs={handleUpdateThemePrefs}
-        onChangeAutoDelete={handleChangeAutoDelete}
-        onToggleFloatingAlerts={() =>
-          handleUpdateThemePrefs({
-            ...themePrefs,
-            showFloatingAlerts: !themePrefs.showFloatingAlerts,
-          })
-        }
-        onPreviewAlert={(urgent) => {
-          setShowNotificationsSheet(false);
-          handlePreviewAlert(urgent);
-        }}
-      />
+        {notificationsMounted && (
+          <NotificationsSheet
+            open={showNotificationsSheet}
+            onClose={() => setShowNotificationsSheet(false)}
+            pings={activePings}
+            currentUid={profile.uid}
+            accentColor={ambientPalette.effectiveButton}
+            backgroundColor={ambientPalette.effectiveBg}
+            prefs={themePrefs}
+            onUpdatePrefs={handleUpdateThemePrefs}
+            onChangeAutoDelete={handleChangeAutoDelete}
+            onToggleFloatingAlerts={() =>
+              handleUpdateThemePrefs({
+                ...themePrefs,
+                showFloatingAlerts: !themePrefs.showFloatingAlerts,
+              })
+            }
+            onPreviewAlert={(urgent) => {
+              setShowNotificationsSheet(false);
+              handlePreviewAlert(urgent);
+            }}
+          />
+        )}
 
-      <WidgetsSheet
-        open={showWidgetsSheet}
-        onClose={() => setShowWidgetsSheet(false)}
-        partnerName={partnerDisplayName}
-        latestPing={activePings[0] ?? null}
-        prefs={themePrefs}
-        onUpdatePrefs={handleUpdateThemePrefs}
-        onSendNormal={() =>
-          dispatchPing({
-            message:
-              themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
-            kind: 'attention',
-          })
-        }
-        onSendUrgent={() =>
-          dispatchPing({
-            message:
-              themePrefs.priorityNotifMessage.trim() ||
-              'Your partner really needs your attention',
-            kind: 'urgent_attention',
-          })
-        }
-        onOpenStandaloneWidget={() => handleToggleCompactWidget(true)}
-        onOpenIpaExport={() => setShowIpaExportSheet(true)}
-        sendingPing={sendingPing}
-      />
+        {widgetsMounted && (
+          <WidgetsSheet
+            open={showWidgetsSheet}
+            onClose={() => setShowWidgetsSheet(false)}
+            partnerName={partnerDisplayName}
+            latestPing={activePings[0] ?? null}
+            prefs={themePrefs}
+            onUpdatePrefs={handleUpdateThemePrefs}
+            onSendNormal={() =>
+              dispatchPing({
+                message:
+                  themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
+                kind: 'attention',
+              })
+            }
+            onSendUrgent={() =>
+              dispatchPing({
+                message:
+                  themePrefs.priorityNotifMessage.trim() ||
+                  'Your partner really needs your attention',
+                kind: 'urgent_attention',
+              })
+            }
+            onOpenStandaloneWidget={() => handleToggleCompactWidget(true)}
+            onOpenIpaExport={isNativeApp ? undefined : () => setShowIpaExportSheet(true)}
+            sendingPing={sendingPing}
+          />
+        )}
 
-      <MobileExportSheet
-        open={showIpaExportSheet}
-        onClose={() => setShowIpaExportSheet(false)}
-        accentColor={resolveAmbientPalette(themePrefs).effectiveButton}
-      />
+        {exportMounted && (
+          <MobileExportSheet
+            open={showIpaExportSheet}
+            onClose={() => setShowIpaExportSheet(false)}
+            accentColor={ambientPalette.effectiveButton}
+          />
+        )}
+      </Suspense>
 
       <OfflineIndicator />
     </>
