@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, type User } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  signInWithCredential,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
 import {
   collection,
   deleteDoc,
@@ -22,6 +29,7 @@ import {
   showPartnerSystemNotification,
   subscribeForegroundFcm,
 } from './firebase';
+import { hasNativeGoogleSignIn, isNativeApp, nativeGoogleSignIn, nativeSignOut } from './utils/nativeAuth';
 import type {
   AspectRatioOption,
   AutoDeleteDuration,
@@ -498,7 +506,17 @@ function TetherWorkspace() {
     setAuthBusy(true);
     setAuthError(null);
     try {
-      const cred = await signInWithPopup(auth, googleProvider);
+      let cred;
+      if (hasNativeGoogleSignIn()) {
+        const { idToken, accessToken } = await nativeGoogleSignIn();
+        cred = await signInWithCredential(auth, GoogleAuthProvider.credential(idToken, accessToken));
+      } else if (isNativeApp()) {
+        throw new Error(
+          'Google Sign-In is not configured in this iOS build. Add the GOOGLE_SERVICE_INFO_PLIST_BASE64 secret and rebuild.'
+        );
+      } else {
+        cred = await signInWithPopup(auth, googleProvider);
+      }
       try {
         localStorage.removeItem(`notifye_name_chosen_${cred.user.uid}`);
       } catch {
@@ -517,6 +535,7 @@ function TetherWorkspace() {
     setJustSignedIn(false);
     exitTestMode();
     void clearNativeWidgetState();
+    await nativeSignOut();
     await signOut(auth);
   };
 
