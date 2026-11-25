@@ -1,6 +1,13 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import firebaseConfig from '../../firebase-applet-config.json';
 import type { PairDoc, StudioThemePrefs, UserProfile } from '../types';
+import { getContrastInk, shiftColor } from './themeColors';
+
+/** shiftColor() returns `rgb(r, g, b)`; the Swift widget expects `#RRGGBB`. */
+function shiftHex(hex: string, delta: number): string {
+  const m = shiftColor(hex, delta).match(/\d+/g) ?? ['245', '158', '11'];
+  return '#' + m.slice(0, 3).map((n) => Number(n).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
 
 export interface WidgetSyncPayload {
   apiKey: string;
@@ -18,6 +25,11 @@ export interface WidgetSyncPayload {
   normalMessage: string;
   priorityMessage: string;
   defaultUrgent: boolean;
+  /** Same gradient stops and text colour as the in-app button (ThinkOfMeButton). */
+  buttonTopHex: string;
+  buttonBottomHex: string;
+  buttonInkHex: string;
+  buttonShape: string;
   updatedAtMs: number;
 }
 
@@ -53,6 +65,7 @@ export async function syncNativeWidgetState(params: {
     ? (pair.partnerAUid === profile.uid ? pair.partnerBName : pair.partnerAName) || 'Partner'
     : 'Partner';
 
+  const buttonColor = themePrefs.buttonColor || '#F59E0B';
   const payload: WidgetSyncPayload = {
     apiKey: firebaseConfig.apiKey,
     projectId: firebaseConfig.projectId,
@@ -64,13 +77,17 @@ export async function syncNativeWidgetState(params: {
     partnerName,
     memberUids: isActive && pair ? pair.memberUids : [],
     buttonLabel: themePrefs.buttonLabel || 'Think of me',
-    buttonColorHex: themePrefs.buttonColor || '#F59E0B',
+    buttonColorHex: buttonColor,
     backgroundColorHex: themePrefs.backgroundColor || '#0B0B0F',
     normalMessage:
       themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
     priorityMessage:
       themePrefs.priorityNotifMessage.trim() || 'Your partner really needs your attention',
     defaultUrgent: themePrefs.widgetDefaultKind === 'urgent_attention',
+    buttonTopHex: shiftHex(buttonColor, 26),
+    buttonBottomHex: shiftHex(buttonColor, -14),
+    buttonInkHex: getContrastInk(buttonColor),
+    buttonShape: themePrefs.buttonShape,
     updatedAtMs: Date.now(),
   };
 

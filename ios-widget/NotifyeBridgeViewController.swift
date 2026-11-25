@@ -8,5 +8,11 @@ import UIKit
 class NotifyeBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(NotifyeWidgetBridge())
+        // Full screen: no status bar; the web layout pads for the notch via safe-area insets.
+        setStatusBarVisible(false)
+    }
+
+    override var prefersHomeIndicatorAutoHidden: Bool {
+        true
     }
 }
