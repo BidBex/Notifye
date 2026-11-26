@@ -19,8 +19,8 @@ With a free Apple ID, an iPhone sideload stops opening after 7 days. Re-sign it,
 
 1. **Name:** on first launch, choose the name your partner will see.
 2. **Pair:** one phone taps **Create pairing code**, and the other types that code under **Enter partner's code**.
-3. **Notify:** tap the big button to send a notification. Every tap sends one, even when you tap quickly. Hold the button for 3 seconds to send a **priority** alert.
-4. **Customize:** the bottom bar has **Notifications** (history and alert style), **Widgets** and **Customize** (colors, shape, size, night mode).
+3. **Notify:** tap the big button to send a notification. If you change the button's text in **Customize**, that text is what your partner's notification says. Every tap sends one, even when you tap quickly. Hold the button for 3 seconds to send a **priority** alert.
+4. **Customize:** the bottom bar has **Notifications** (history, alert style, closed-app notifications) and **Customize** (colors, shape, size, night mode).
 
 ### iPhone Home Screen widget (iOS 17+)
 
@@ -28,12 +28,13 @@ With a free Apple ID, an iPhone sideload stops opening after 7 days. Re-sign it,
 2. Search for **Notifye** and pick a size.
 3. Tap the widget's button to notify your partner without opening the app. It uses the same colors as your in-app button.
 
-To show your partner's name and send in the background, the widget reads the pairing from storage it shares with the app (an *App Group*). Some re-signing setups remove that shared storage. When it's missing, tapping the widget opens Notifye, which then sends the notification. The **Widgets** screen in the app tells you when this is happening.
+Tapping the widget never opens Notifye. iOS runs the send inside the Notifye app in the background, so it works even when re-signing removed the storage the app shares with its widget (an *App Group*). Without that shared storage, the widget can't show your partner's name or the "Sent" confirmation, but it still sends. Open Notifye once after installing so the widget has your pairing.
 
 ### Notifications
 
 - **While the app is open:** a banner, a sound and a vibration.
 - **While the app is in the background:** a system notification, for as long as the phone keeps the app running.
+- **iPhone, app closed, without ntfy:** Notifye checks for new taps in the background and shows the notification itself. iOS decides when it runs this check: usually every 15 minutes to a few hours, depending on how often you use the app, and not at all in Low Power Mode or after you swipe the app away. Instant notifications need Apple push, which requires a paid developer account, so for instant delivery use ntfy below.
 - **When the app is fully closed (free, iPhone and Android):** after pairing, Notifye suggests turning this on. You can also find it any time under **Notifications → Notify me when Notifye is closed**. Tap **Turn on**:
   - **Android:** ntfy opens already subscribed. If ntfy isn't installed, Google Play opens first, and ntfy opens by itself when you come back. Back in Notifye, a test notification is sent automatically.
   - **iPhone:** your private code is copied. Open ntfy, tap **+**, paste and tap **Subscribe**. Back in Notifye, a test notification is sent automatically. The ntfy iPhone app doesn't accept subscribe links from other apps, so this one paste can't be automated.

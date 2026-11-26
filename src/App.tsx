@@ -43,7 +43,12 @@ import { PairingView } from './components/PairingView';
 import { WidgetStandaloneView } from './components/WidgetStandaloneView';
 import { playWarmChime } from './utils/chime';
 import { triggerHaptic } from './utils/haptics';
-import { loadThemePrefs, resolveAmbientPalette, saveThemePrefs } from './utils/themeColors';
+import {
+  loadThemePrefs,
+  normalPingMessage,
+  resolveAmbientPalette,
+  saveThemePrefs,
+} from './utils/themeColors';
 import {
   devicePlatform,
   getReceiveTopic,
@@ -797,7 +802,7 @@ function TetherWorkspace() {
       const now = Date.now();
       const message = urgent
         ? themePrefs.priorityNotifMessage.trim() || 'Your partner really needs your attention'
-        : themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention';
+        : normalPingMessage(themePrefs);
       const isRealActive = Boolean(pair && pair.status === 'active');
       const partnerDisplay = isRealActive
         ? (pair!.partnerAUid === fbUser?.uid ? pair!.partnerBName : pair!.partnerAName) || 'Partner'
@@ -840,6 +845,7 @@ function TetherWorkspace() {
       testMode,
       themePrefs.incomingHapticIntensity,
       themePrefs.normalNotifMessage,
+      themePrefs.buttonLabel,
       themePrefs.priorityNotifMessage,
       themePrefs.priorityNotifTag,
     ]
@@ -999,7 +1005,7 @@ function TetherWorkspace() {
       message:
         action === 'priority'
           ? themePrefs.priorityNotifMessage.trim() || 'Your partner really needs your attention'
-          : themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
+          : normalPingMessage(themePrefs),
       kind: action === 'priority' ? 'urgent_attention' : 'attention',
     });
   }, [
@@ -1010,6 +1016,7 @@ function TetherWorkspace() {
     testMode,
     dispatchPing,
     themePrefs.normalNotifMessage,
+    themePrefs.buttonLabel,
     themePrefs.priorityNotifMessage,
     widgetActionTick,
   ]);
@@ -1150,7 +1157,7 @@ function TetherWorkspace() {
           onSendNormal={() =>
             dispatchPing({
               message:
-                themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
+                normalPingMessage(themePrefs),
               kind: 'attention',
             })
           }
@@ -1173,13 +1180,13 @@ function TetherWorkspace() {
           onChangeAutoDelete={handleChangeAutoDelete}
           onOpenCustomize={() => setShowCustomizeSheet(true)}
           onOpenNotifications={() => setShowNotificationsSheet(true)}
-          onOpenWidgets={() => setShowWidgetsSheet(true)}
+          // Widgets tab hidden: the Home Screen widget is added from iOS itself (see README).
           soundEnabled={soundEnabled}
           onToggleSound={handleToggleSound}
           onSendAttentionPing={() =>
             dispatchPing({
               message:
-                themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
+                normalPingMessage(themePrefs),
               kind: 'attention',
             })
           }
@@ -1278,7 +1285,7 @@ function TetherWorkspace() {
             onSendNormal={() =>
               dispatchPing({
                 message:
-                  themePrefs.normalNotifMessage.trim() || 'Your partner wants your attention',
+                  normalPingMessage(themePrefs),
                 kind: 'attention',
               })
             }
