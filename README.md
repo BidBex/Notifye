@@ -19,7 +19,7 @@ With a free Apple ID, an iPhone sideload stops opening after 7 days. Re-sign it,
 
 1. **Name:** on first launch, choose the name your partner will see.
 2. **Pair:** one phone taps **Create pairing code**, and the other types that code under **Enter partner's code**.
-3. **Notify:** tap the big button to send a notification. If you change the button's text in **Customize**, that text is what your partner's notification says. Every tap sends one, even when you tap quickly. Hold the button for 3 seconds to send a **priority** alert.
+3. **Notify:** tap the big button to send a notification. Every tap arrives as its own notification, with sound and a buzz. If you change the button's text in **Customize**, that text is what your partner's notification says. Every tap sends one, even when you tap quickly. Hold the button for 3 seconds to send a **priority** alert.
 4. **Customize:** the bottom bar has **Notifications** (history, alert style, closed-app notifications) and **Customize** (colors, shape, size, night mode).
 
 ### iPhone Home Screen widget (iOS 17+)
@@ -100,6 +100,6 @@ npm run lint         # type check (tsc --noEmit)
 ## Limitations
 
 - **Instant notifications on a closed iPhone** need Apple push, which Apple only allows for apps signed with a paid developer account. Free-signed iPhones get Notifye's background check instead (see above).
-- **Android relay:** taps pass through the public ntfy.sh relay. Only someone who knows the long random channel name can read them. Fast bursts are combined ("+3 more") to stay within ntfy.sh's limits (about one message every 5 seconds, 250 a day per phone).
+- **Android relay:** taps pass through the public ntfy.sh relay. Only someone who knows the long random channel name can read them. Every tap is its own notification. ntfy.sh allows bursts of about 60 messages, then about one every 5 seconds, and 250 a day per phone. Only if it starts refusing are the extra taps delivered together as one "+N more" message.
 - **Android signing:** the APK is signed with a temporary debug key that changes on each CI build. Updating to a newer build may mean uninstalling the old one first, which deletes the phone's saved name and pairing.
 - **No Android widget yet.**

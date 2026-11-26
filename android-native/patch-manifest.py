@@ -13,6 +13,7 @@ permissions = [
     'android.permission.RECEIVE_BOOT_COMPLETED',
     'android.permission.POST_NOTIFICATIONS',
     'android.permission.INTERNET',
+    'android.permission.VIBRATE',  # in-app buzz (navigator.vibrate) and notification buzz
 ]
 for perm in permissions:
     if perm not in xml:

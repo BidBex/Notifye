@@ -430,6 +430,8 @@ function TetherWorkspace() {
   const activePairId = pair && pair.status === 'active' ? pair.pairId : '';
   const soundEnabledRef = useRef(soundEnabled);
   soundEnabledRef.current = soundEnabled;
+  const autoDeleteMsRef = useRef(themePrefs.autoDeleteSeconds * 1000);
+  autoDeleteMsRef.current = themePrefs.autoDeleteSeconds * 1000;
   const hapticIntensityRef = useRef(themePrefs.incomingHapticIntensity);
   hapticIntensityRef.current = themePrefs.incomingHapticIntensity;
   const fbUid = fbUser?.uid ?? '';
@@ -471,15 +473,21 @@ function TetherWorkspace() {
           for (const item of items) {
             if (!seenPingIdsRef.current.has(item.pingId)) {
               seenPingIdsRef.current.add(item.pingId);
-              if (item.senderUid !== fbUid) {
+              // Taps that already expired while the connection was paused (app in the
+              // background) were notified natively; don't replay them as fresh alerts.
+              const serverMs = item.createdAt?.toMillis ? item.createdAt.toMillis() : now;
+              const expired = now - serverMs > autoDeleteMsRef.current;
+              if (item.senderUid !== fbUid && !expired) {
                 const isUrgent = item.kind === 'urgent_attention';
                 setIncomingAlert(item);
-                triggerHaptic(
-                  isUrgent ? 'receiveUrgent' : 'receive',
-                  hapticIntensityRef.current
-                );
-                if (soundEnabledRef.current) {
-                  playWarmChime(isUrgent ? 'receiveUrgent' : 'receive');
+                // In the background the native notification already sounds and buzzes.
+                const onScreen =
+                  typeof document === 'undefined' || document.visibilityState === 'visible';
+                if (onScreen) {
+                  triggerHaptic(isUrgent ? 'receiveUrgent' : 'receive', hapticIntensityRef.current);
+                  if (soundEnabledRef.current) {
+                    playWarmChime(isUrgent ? 'receiveUrgent' : 'receive');
+                  }
                 }
                 void showPartnerSystemNotification(
                   isUrgent

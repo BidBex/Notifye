@@ -103,7 +103,9 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
 
   // Refresh clock once per minute for automatic Ambient Night mode transitions
   useEffect(() => {
-    const id = window.setInterval(() => setClockDate(new Date()), 60000);
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setClockDate(new Date());
+    }, 60000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -113,8 +115,9 @@ export const PairedStudio: React.FC<PairedStudioProps> = ({
     setNowMs(Date.now());
     // 1 s tick (was 200 ms, which re-rendered the whole studio 5x/second).
     // Progress bars animate smoothly between ticks with a 1 s CSS transition.
+    // Skipped while the app is off screen (no redraws in the background = less battery).
     const id = window.setInterval(() => {
-      setNowMs(Date.now());
+      if (document.visibilityState === 'visible') setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(id);
   }, [pings.length, incomingAlert]);
