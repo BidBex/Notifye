@@ -35,7 +35,7 @@ Tapping the widget never opens Notifye. iOS runs the send inside the Notifye app
 - **While the app is open:** a banner, a sound and a vibration.
 - **While the app is in the background:** a system notification, for as long as the phone keeps the app running.
 - **Android, app closed:** Notifye shows the notification itself, instantly. Nothing to set up and nothing else to install. After pairing, Notifye runs a small background connection. Android requires a permanent "Notifye: Ready for …'s taps" notification for that; you can hide it by long-pressing it and turning off **Background connection**. It restarts by itself after a reboot. Some phones (Xiaomi, Huawei, Samsung with strict battery saving) may still stop it; if taps stop arriving, set Notifye's battery usage to **Unrestricted**.
-- **iPhone, app closed:** Notifye checks for new taps in the background and shows the notification itself. iOS decides when that check runs: usually every 15 minutes to a few hours, not in Low Power Mode, and not after you swipe the app away. iOS only lets an app be woken instantly through Apple push, which requires a paid Apple developer account.
+- **iPhone, app closed:** Notifye shows the notification itself, with sound, right away. While it's in the background it plays a silent sound (mixed with your music, so nothing is interrupted), which keeps it running so it can stay connected. This is not allowed for App Store apps but works for sideloaded ones; it uses a little more battery. If you swipe Notifye away in the app switcher it stops; then it falls back to a background check that iOS runs when it chooses (usually every 15 minutes to a few hours). Open Notifye again to restore instant notifications.
 
 ## How it works
 

@@ -115,6 +115,9 @@ function TetherWorkspace() {
   const [fbUser, setFbUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [pair, setPair] = useState<PairDoc | null>(null);
+  // Pair ID whose document has been loaded at least once. Until then a paired user sees the
+  // splash instead of a flash of the pairing screen.
+  const [pairResolvedId, setPairResolvedId] = useState('');
   const [pings, setPings] = useState<PingDoc[]>([]);
   const [partnerDeviceToken, setPartnerDeviceToken] = useState('');
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -342,6 +345,8 @@ function TetherWorkspace() {
     }
 
     const targetPairId = profile.pairId;
+    // Never keep the splash up forever (e.g. offline on first launch with nothing cached).
+    const resolveTimer = window.setTimeout(() => setPairResolvedId(targetPairId), 6000);
     const pairsQuery = query(
       collection(db, 'pairs'),
       where('memberUids', 'array-contains', fbUser.uid)
@@ -350,6 +355,11 @@ function TetherWorkspace() {
       pairsQuery,
       (snap) => {
         const match = snap.docs.find((d) => d.id === targetPairId);
+        // An empty answer from the local cache isn't final; wait for the server.
+        if (match || !snap.metadata.fromCache) {
+          window.clearTimeout(resolveTimer);
+          setPairResolvedId(targetPairId);
+        }
         if (!match) {
           setPair(null);
           if (!snap.metadata.fromCache) {
@@ -408,7 +418,10 @@ function TetherWorkspace() {
       (err) => handleFirestoreError(err, OperationType.LIST, 'pairs')
     );
 
-    return () => unsubPair();
+    return () => {
+      window.clearTimeout(resolveTimer);
+      unsubPair();
+    };
   }, [authReady, fbUser, profile?.pairId]);
 
   // 4. Listen to Real-Time Pings & Partner Device Token
@@ -510,11 +523,10 @@ function TetherWorkspace() {
     };
   }, [authReady, fbUid, activePairId]);
 
-  // Closed-app notifications, shown by Notifye itself (no other app to install).
-  // Android: a Notifye background service listens on this phone's private relay channel, so it
-  // advertises that channel to the partner. iPhone can't keep a connection open while closed,
-  // so it advertises nothing and relies on its own background check (NotifyeBackgroundCheck).
-  const canReceiveInBackground = Capacitor.getPlatform() === 'android';
+  // Closed-app notifications, shown by Notifye itself (no other app to install). The native
+  // listener (Android: NotifyeListenerService, iPhone: NotifyeLiveListener) keeps a connection to
+  // this phone's private relay channel, which is advertised to the partner here.
+  const canReceiveInBackground = Capacitor.isNativePlatform();
   const pairMembersKey = pair && pair.status === 'active' ? pair.memberUids.join(',') : '';
   const partnerNameForListener =
     pair && pair.status === 'active'
@@ -1077,6 +1089,14 @@ function TetherWorkspace() {
   }
 
   if (!profile) {
+    return (
+      <div className="min-h-dvh bg-[#0B0B0F] flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full border-2 border-amber-500/30 border-t-amber-400 animate-spin" />
+      </div>
+    );
+  }
+
+  if (profile.pairId && pairResolvedId !== profile.pairId && !testMode) {
     return (
       <div className="min-h-dvh bg-[#0B0B0F] flex items-center justify-center">
         <div className="w-8 h-8 rounded-full border-2 border-amber-500/30 border-t-amber-400 animate-spin" />

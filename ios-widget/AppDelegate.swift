@@ -11,6 +11,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         NotifyeBackgroundCheck.register()
+        NotifyeLiveListener.shared.start() // resumes instant notifications if already paired
         return true
     }
 
@@ -21,6 +22,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func applicationDidBecomeActive(_ application: UIApplication) {
         NotifyeBackgroundCheck.markSeen()
+        NotifyeLiveListener.shared.appBecameActive()
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
