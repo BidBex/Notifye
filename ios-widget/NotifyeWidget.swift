@@ -24,7 +24,8 @@ struct NotifyeTimelineEntry: TimelineEntry {
     var justSent: Bool { showStatus && !statusIsError }
 }
 
-private let kStatusVisibleSeconds: TimeInterval = 8
+// Short, so the button is back to normal quickly for the next tap.
+private let kStatusVisibleSeconds: TimeInterval = 3
 
 struct NotifyeProvider: TimelineProvider {
     func placeholder(in context: Context) -> NotifyeTimelineEntry {
@@ -133,6 +134,41 @@ private struct Palette {
     }
 }
 
+/// The coloured button surface, drawn as a picture. With iOS's tinted / clear Home Screen styles
+/// every shape and colour in a widget is repainted in one tint (the button turned white); only
+/// pictures can opt out and keep their real colours (widgetAccentedRenderingMode(.fullColor)).
+@available(iOS 17.0, *)
+private enum ButtonArt {
+    static func image(palette: Palette, size: CGFloat) -> UIImage {
+        let rect = CGRect(x: 0, y: 0, width: size, height: size)
+        let renderer = UIGraphicsImageRenderer(size: rect.size, format: {
+            let f = UIGraphicsImageRendererFormat.default()
+            f.scale = 3
+            f.opaque = false
+            return f
+        }())
+        let img = renderer.image { ctx in
+            let cg = ctx.cgContext
+            let path = palette.shape == "squircle"
+                ? UIBezierPath(roundedRect: rect, cornerRadius: size * 0.3)
+                : UIBezierPath(ovalIn: rect)
+            path.addClip()
+            let space = CGColorSpaceCreateDeviceRGB()
+            let colors = [UIColor(palette.buttonTop).cgColor, UIColor(palette.accent).cgColor, UIColor(palette.buttonBottom).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: space, colors: colors, locations: [0, 0.6, 1]) {
+                cg.drawLinearGradient(g, start: CGPoint(x: 0, y: 0), end: CGPoint(x: 0, y: size), options: [])
+            }
+            // soft top-left highlight, like the app's spotlight
+            let hl = [UIColor.white.withAlphaComponent(0.28).cgColor, UIColor.white.withAlphaComponent(0).cgColor] as CFArray
+            if let g = CGGradient(colorsSpace: space, colors: hl, locations: [0, 1]) {
+                let c = CGPoint(x: size * 0.35, y: size * 0.25)
+                cg.drawRadialGradient(g, startCenter: c, startRadius: 1, endCenter: c, endRadius: size * 0.6, options: [])
+            }
+        }
+        return img
+    }
+}
+
 /// Visible press feedback: the button sinks and darkens while the finger is on it.
 @available(iOS 17.0, *)
 private struct PressFeedbackStyle: ButtonStyle {
@@ -154,6 +190,15 @@ private struct AppButtonFace: View {
     let size: CGFloat
     var compact = false
 
+    @ViewBuilder private var buttonSurface: some View {
+        let img = Image(uiImage: ButtonArt.image(palette: palette, size: size)).resizable()
+        if #available(iOSApplicationExtension 18.0, *) {
+            img.widgetAccentedRenderingMode(.fullColor)
+        } else {
+            img
+        }
+    }
+
     var body: some View {
         let shape = palette.buttonShape(size: size)
         let sent = entry.justSent
@@ -166,8 +211,7 @@ private struct AppButtonFace: View {
             if palette.shape == "bloom" {
                 Circle().stroke(palette.accent.opacity(0.5), lineWidth: 1).frame(width: size + 10, height: size + 10)
             }
-            shape
-                .fill(palette.buttonFill)
+            buttonSurface
                 .shadow(color: palette.accent.opacity(0.45), radius: size * 0.16, y: 2)
             shape.stroke(
                 LinearGradient(colors: [.white.opacity(0.38), .clear], startPoint: .top, endPoint: .center),
@@ -176,9 +220,6 @@ private struct AppButtonFace: View {
             if palette.shape == "bloom" {
                 Circle().stroke(palette.ink.opacity(0.22), lineWidth: 1).padding(size * 0.06)
             }
-            // top-left highlight, like the app's spotlight
-            shape
-                .fill(RadialGradient(colors: [.white.opacity(0.28), .clear], center: .init(x: 0.35, y: 0.25), startRadius: 1, endRadius: size * 0.6))
 
             VStack(spacing: compact ? 1 : 3) {
                 if sent {
@@ -249,10 +290,17 @@ struct NotifyeWidgetView: View {
         }
     }
 
-    /// Always sends in place; never opens the app.
+    /// Always sends in place; never opens the app. If the widget can read the pairing it sends
+    /// by itself (fast); otherwise iOS runs the send inside the Notifye app in the background.
+    @ViewBuilder
     private func sendButton<Content: View>(urgent: Bool, @ViewBuilder _ content: () -> Content) -> some View {
-        Button(intent: SendNotifyePingIntent(isUrgent: urgent)) { content() }
-            .buttonStyle(PressFeedbackStyle())
+        if entry.isPaired {
+            Button(intent: SendNotifyePingIntent(isUrgent: urgent)) { content() }
+                .buttonStyle(PressFeedbackStyle())
+        } else {
+            Button(intent: SendNotifyePingViaAppIntent(isUrgent: urgent)) { content() }
+                .buttonStyle(PressFeedbackStyle())
+        }
     }
 
     /// Status under the button: just-sent / error for a few seconds, then "Last sent 14:05".

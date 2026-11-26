@@ -60,40 +60,73 @@ struct NotifyeWidgetState: Codable {
     }
 }
 
-// MARK: - Send intent
+// MARK: - Send intents
 
-/// Widget button action. Conforming to LiveActivityIntent makes iOS run perform() inside the
-/// Notifye app process (started in the background, nothing opens on screen) instead of the
-/// widget extension, so it can use the app's own storage even when the App Group doesn't work.
-/// If iOS runs it in the extension instead, it uses the App Group copy.
+/// Fast path: runs inside the widget extension itself (no app launch). Used when the widget can
+/// read the pairing from the shared App Group.
 @available(iOS 17.0, *)
-struct SendNotifyePingIntent: LiveActivityIntent {
+struct SendNotifyePingIntent: AppIntent {
     static var title: LocalizedStringResource = "Notify Partner"
     static var description = IntentDescription("Sends a Notifye notification to your paired partner.")
     static var openAppWhenRun: Bool = false
+    static var isDiscoverable: Bool = false
 
     @Parameter(title: "Priority Alert", default: false)
     var isUrgent: Bool
 
-    init() {
-        self.isUrgent = false
-    }
-
-    init(isUrgent: Bool) {
-        self.isUrgent = isUrgent
-    }
+    init() { self.isUrgent = false }
+    init(isUrgent: Bool) { self.isUrgent = isUrgent }
 
     func perform() async throws -> some IntentResult {
+        await NotifyeSender().send(isUrgent: isUrgent)
+        return .result()
+    }
+}
+
+/// Fallback: LiveActivityIntent makes iOS run perform() inside the Notifye app process (started
+/// in the background, nothing opens on screen), which can read the app's own storage when
+/// re-signing broke the App Group. Slower, because the app may have to start first.
+@available(iOS 17.0, *)
+struct SendNotifyePingViaAppIntent: LiveActivityIntent {
+    static var title: LocalizedStringResource = "Notify Partner (via app)"
+    static var description = IntentDescription("Sends a Notifye notification to your paired partner.")
+    static var openAppWhenRun: Bool = false
+    static var isDiscoverable: Bool = false
+
+    @Parameter(title: "Priority Alert", default: false)
+    var isUrgent: Bool
+
+    init() { self.isUrgent = false }
+    init(isUrgent: Bool) { self.isUrgent = isUrgent }
+
+    func perform() async throws -> some IntentResult {
+        await NotifyeSender().send(isUrgent: isUrgent)
+        return .result()
+    }
+}
+
+@available(iOS 17.0, *)
+struct NotifyeSender {
+    func send(isUrgent: Bool) async {
         guard let state = NotifyeWidgetState.load(), state.isPaired else {
             NotifyeShared.setStatus("Open Notifye once to connect")
             WidgetCenter.shared.reloadAllTimelines()
-            return .result()
+            return
         }
 
         do {
             let idToken = try await NotifyeFirestore.idToken(apiKey: state.apiKey, refreshToken: state.refreshToken)
-            try await commitFirestorePing(state: state, idToken: idToken, isUrgent: isUrgent)
-            await sendClosedAppPush(state: state, isUrgent: isUrgent)
+            // Save the tap and wake the partner's phone at the same time.
+            async let push: Void = sendClosedAppPush(state: state, isUrgent: isUrgent)
+            do {
+                try await commitFirestorePing(state: state, idToken: idToken, isUrgent: isUrgent)
+            } catch {
+                // A cached token may have been revoked: retry once with a fresh one.
+                NotifyeFirestore.clearCachedToken()
+                let fresh = try await NotifyeFirestore.idToken(apiKey: state.apiKey, refreshToken: state.refreshToken)
+                try await commitFirestorePing(state: state, idToken: fresh, isUrgent: isUrgent)
+            }
+            await push
             NotifyeShared.setStatus(isUrgent ? "Priority sent to \(state.partnerName)" : "Sent to \(state.partnerName)")
             NotifyeShared.markSent(urgent: isUrgent)
         } catch {
@@ -101,7 +134,6 @@ struct SendNotifyePingIntent: LiveActivityIntent {
         }
 
         WidgetCenter.shared.reloadAllTimelines()
-        return .result()
     }
 
     /// Same as sendClosedAppPush() in src/utils/closedAppPush.ts: publish to the partner's ntfy topic.
@@ -147,47 +179,50 @@ struct SendNotifyePingIntent: LiveActivityIntent {
 
         let memberArray = state.memberUids.map { ["stringValue": $0] }
 
-        let body: [String: Any] = [
-            "writes": [
-                [
-                    "update": [
-                        "name": pairDocName,
-                        "fields": [
-                            "lastPingByUid": ["stringValue": state.uid],
-                            "lastPingMessage": ["stringValue": message],
-                        ],
-                    ],
-                    "updateMask": [
-                        "fieldPaths": ["lastPingByUid", "lastPingMessage"],
-                    ],
-                    "updateTransforms": [
-                        ["fieldPath": "lastPingAt", "setToServerValue": "REQUEST_TIME"],
-                        ["fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"],
-                        ["fieldPath": "pingCount", "increment": ["integerValue": "1"]],
-                    ],
-                ],
-                [
-                    "currentDocument": ["exists": false],
-                    "update": [
-                        "name": pingDocName,
-                        "fields": [
-                            "pingId": ["stringValue": pingId],
-                            "pairId": ["stringValue": state.pairId],
-                            "memberUids": ["arrayValue": ["values": memberArray]],
-                            "senderUid": ["stringValue": state.uid],
-                            "senderName": ["stringValue": state.displayName],
-                            "message": ["stringValue": message],
-                            "kind": ["stringValue": kind],
-                            "momentCardUrl": ["stringValue": ""],
-                            "aspectRatio": ["stringValue": ""],
-                        ],
-                    ],
-                    "updateTransforms": [
-                        ["fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME"],
-                    ],
+        // The shared pair summary is updated at most every 1.5 s (like the app does); every tap
+        // still gets its own ping document.
+        let lastPairUpdate = UserDefaults.standard.double(forKey: "notifye_widget_pair_update_ms")
+        let updatePair = Double(nowMs) - lastPairUpdate > 1500
+        if updatePair { UserDefaults.standard.set(Double(nowMs), forKey: "notifye_widget_pair_update_ms") }
+
+        let pairWrite: [String: Any] = [
+            "update": [
+                "name": pairDocName,
+                "fields": [
+                    "lastPingByUid": ["stringValue": state.uid],
+                    "lastPingMessage": ["stringValue": message],
                 ],
             ],
+            "updateMask": [
+                "fieldPaths": ["lastPingByUid", "lastPingMessage"],
+            ],
+            "updateTransforms": [
+                ["fieldPath": "lastPingAt", "setToServerValue": "REQUEST_TIME"],
+                ["fieldPath": "updatedAt", "setToServerValue": "REQUEST_TIME"],
+                ["fieldPath": "pingCount", "increment": ["integerValue": "1"]],
+            ],
         ]
+        let pingWrite: [String: Any] = [
+            "currentDocument": ["exists": false],
+            "update": [
+                "name": pingDocName,
+                "fields": [
+                    "pingId": ["stringValue": pingId],
+                    "pairId": ["stringValue": state.pairId],
+                    "memberUids": ["arrayValue": ["values": memberArray]],
+                    "senderUid": ["stringValue": state.uid],
+                    "senderName": ["stringValue": state.displayName],
+                    "message": ["stringValue": message],
+                    "kind": ["stringValue": kind],
+                    "momentCardUrl": ["stringValue": ""],
+                    "aspectRatio": ["stringValue": ""],
+                ],
+            ],
+            "updateTransforms": [
+                ["fieldPath": "createdAt", "setToServerValue": "REQUEST_TIME"],
+            ],
+        ]
+        let body: [String: Any] = ["writes": updatePair ? [pairWrite, pingWrite] : [pingWrite]]
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -208,7 +243,40 @@ struct SendNotifyePingIntent: LiveActivityIntent {
 @available(iOS 15.0, *)
 enum NotifyeFirestore {
     /// Exchanges the saved Firebase refresh token for a short-lived ID token.
+    private static let tokenKey = "notifye_cached_id_token"
+    private static let tokenExpKey = "notifye_cached_id_token_exp"
+    private static let tokenOwnerKey = "notifye_cached_id_token_owner"
+
+    /// Firebase ID tokens are valid for an hour; reusing one saves a round trip on every tap.
+    static func clearCachedToken() {
+        for store in [NotifyeShared.defaults, UserDefaults.standard].compactMap({ $0 }) {
+            store.removeObject(forKey: tokenKey)
+            store.removeObject(forKey: tokenExpKey)
+            store.removeObject(forKey: tokenOwnerKey)
+        }
+    }
+
     static func idToken(apiKey: String, refreshToken: String) async throws -> String {
+        let stores = [NotifyeShared.defaults, UserDefaults.standard].compactMap { $0 }
+        let owner = String(refreshToken.suffix(24)) // a token only counts for the identity that made it
+        for store in stores {
+            if let token = store.string(forKey: tokenKey),
+               store.string(forKey: tokenOwnerKey) == owner,
+               store.double(forKey: tokenExpKey) > Date().timeIntervalSince1970 + 120 {
+                return token
+            }
+        }
+        let (token, expiresIn) = try await exchange(apiKey: apiKey, refreshToken: refreshToken)
+        let exp = Date().timeIntervalSince1970 + expiresIn
+        for store in stores {
+            store.set(token, forKey: tokenKey)
+            store.set(exp, forKey: tokenExpKey)
+            store.set(owner, forKey: tokenOwnerKey)
+        }
+        return token
+    }
+
+    private static func exchange(apiKey: String, refreshToken: String) async throws -> (String, TimeInterval) {
         guard let url = URL(string: "https://securetoken.googleapis.com/v1/token?key=\(apiKey)") else {
             throw URLError(.badURL)
         }
@@ -231,7 +299,8 @@ enum NotifyeFirestore {
         else {
             throw URLError(.cannotParseResponse)
         }
-        return idToken
+        let expiresIn = TimeInterval((json["expires_in"] as? String).flatMap(Double.init) ?? 3600)
+        return (idToken, expiresIn)
     }
 
     struct PairSummary {
