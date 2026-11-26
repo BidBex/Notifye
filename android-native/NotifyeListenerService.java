@@ -35,7 +35,11 @@ public class NotifyeListenerService extends Service {
     static final String KEY_PARTNER = "partner";
     private static final String KEY_LAST_ID = "last_id";
 
-    private static final String CHANNEL_PINGS = "notifye_pings";
+    // v2: notification channels can't be changed after creation; v2 adds the buzz pattern.
+    private static final String CHANNEL_PINGS = "notifye_pings_v2";
+    private static final String OLD_CHANNEL_PINGS = "notifye_pings";
+    private static final long[] BUZZ = {0, 280, 120, 280};
+    private static final long[] BUZZ_URGENT = {0, 450, 150, 450, 150, 650};
     private static final String CHANNEL_SERVICE = "notifye_listener";
     private static final int SERVICE_NOTIFICATION_ID = 7101;
 
@@ -173,13 +177,13 @@ public class NotifyeListenerService extends Service {
             String title = msg.optString("title", "Notifye");
             String body = msg.optString("message", "Your partner wants your attention");
             boolean urgent = msg.optInt("priority", 3) >= 5;
-            showPing(urgent ? "⚠ " + title : title, body);
+            showPing(urgent ? "⚠ " + title : title, body, urgent);
         } catch (Exception ignored) {
             // keepalive / malformed line
         }
     }
 
-    private void showPing(String title, String body) {
+    private void showPing(String title, String body, boolean urgent) {
         if (!NotificationManagerCompat.from(this).areNotificationsEnabled()) return;
         Notification n = new NotificationCompat.Builder(this, CHANNEL_PINGS)
             .setSmallIcon(android.R.drawable.ic_popup_reminder)
@@ -187,7 +191,8 @@ public class NotifyeListenerService extends Service {
             .setContentText(body)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND | NotificationCompat.DEFAULT_LIGHTS)
+            .setVibrate(urgent ? BUZZ_URGENT : BUZZ) // Android < 8; newer versions use the channel
             .setAutoCancel(true)
             .setContentIntent(openAppIntent())
             .build();
@@ -207,9 +212,11 @@ public class NotifyeListenerService extends Service {
     private void createChannels() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = getSystemService(NotificationManager.class);
+        nm.deleteNotificationChannel(OLD_CHANNEL_PINGS);
         NotificationChannel pings = new NotificationChannel(CHANNEL_PINGS, "Partner taps", NotificationManager.IMPORTANCE_HIGH);
         pings.setDescription("Notifications when your partner taps the button");
         pings.enableVibration(true);
+        pings.setVibrationPattern(BUZZ);
         nm.createNotificationChannel(pings);
         NotificationChannel service = new NotificationChannel(CHANNEL_SERVICE, "Background connection", NotificationManager.IMPORTANCE_MIN);
         service.setDescription("Keeps Notifye ready to receive taps while it's closed. You can hide this.");

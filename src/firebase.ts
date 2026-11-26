@@ -35,18 +35,36 @@ export const db = Capacitor.isNativePlatform()
   : getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 /**
- * After the app was in the background for a while, the WebView's connection to Firestore can
- * be dead without the SDK noticing (taps stop arriving or arrive late until the app is killed).
- * Cycling the network forces a fresh connection; listeners stay subscribed and resync.
+ * Background behaviour of the Firestore connection.
+ *
+ * Native app: while Notifye is in the background, its native listener (NotifyeListenerService /
+ * NotifyeLiveListener) shows partner taps, so the WebView's own Firestore connection is paused
+ * after 15 s to save battery, and reopened as soon as the app is back. Reopening also replaces a
+ * connection that died silently during a long suspension (late or missing taps after resume).
+ *
+ * Web: keep listening (no native listener), but force a fresh connection after a long break.
  */
 let hiddenAt = 0;
+let pauseTimer: number | undefined;
+let networkPaused = false;
 if (typeof document !== 'undefined') {
+  const native = Capacitor.isNativePlatform();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       hiddenAt = Date.now();
+      if (native) {
+        pauseTimer = window.setTimeout(() => {
+          networkPaused = true;
+          void disableNetwork(db).catch(() => undefined);
+        }, 15_000);
+      }
       return;
     }
-    if (hiddenAt && Date.now() - hiddenAt > 30_000) {
+    window.clearTimeout(pauseTimer);
+    if (networkPaused) {
+      networkPaused = false;
+      void enableNetwork(db).catch(() => undefined);
+    } else if (!native && hiddenAt && Date.now() - hiddenAt > 30_000) {
       void disableNetwork(db)
         .catch(() => undefined)
         .then(() => enableNetwork(db))

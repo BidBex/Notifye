@@ -1,3 +1,4 @@
+import AudioToolbox
 import AVFoundation
 import Capacitor
 import Foundation
@@ -55,6 +56,15 @@ final class NotifyeLiveListener: NSObject, URLSessionDataDelegate {
             self.backoff = 2
             self.connect()
         }
+        DispatchQueue.main.async {
+            if UIApplication.shared.applicationState != .active { self.startKeepAlive() }
+        }
+    }
+
+    /// Leaving the screen: keep the app running with the silent sound so taps arrive instantly.
+    /// Started while still in the foreground, where iOS reliably allows audio to begin.
+    func appWillResignActive() {
+        guard !topic.isEmpty else { return }
         DispatchQueue.main.async { self.startKeepAlive() }
     }
 
@@ -69,6 +79,8 @@ final class NotifyeLiveListener: NSObject, URLSessionDataDelegate {
 
     /// The app came back on screen: make sure the connection and keep-alive are healthy.
     func appBecameActive() {
+        // On screen the app is awake anyway; pause the silent sound to save battery.
+        DispatchQueue.main.async { self.player?.pause() }
         if topic.isEmpty { return }
         start()
         queue.async {
@@ -153,6 +165,9 @@ final class NotifyeLiveListener: NSObject, URLSessionDataDelegate {
         if #available(iOS 15.0, *) { content.interruptionLevel = .timeSensitive }
         let req = UNNotificationRequest(identifier: "notifye-live-\(UUID().uuidString)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(req)
+        // Explicit buzz: the notification sound alone doesn't vibrate when the phone is on silent
+        // (unless "Play Haptics in Silent Mode" is on).
+        AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
         NotifyeBackgroundCheck.markSeen() // the background check must not repeat this tap
     }
 

@@ -1,5 +1,3 @@
-import { triggerHaptic } from './haptics';
-
 type ChimeVariant = 'send' | 'receive' | 'urgentSend' | 'receiveUrgent';
 
 let audioCtx: AudioContext | null = null;
@@ -116,12 +114,6 @@ function playNotes(ctx: AudioContext, variant: ChimeVariant): void {
 }
 
 export function playWarmChime(variant: ChimeVariant): void {
-  if (variant === 'receive') {
-    triggerHaptic('receive');
-  } else if (variant === 'receiveUrgent') {
-    triggerHaptic('receiveUrgent');
-  }
-
   const ctx = audioCtx;
   if (ctx && ctx.state === 'running') {
     try {

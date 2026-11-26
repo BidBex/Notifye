@@ -123,7 +123,14 @@ export function onAppResume(onResume: () => void): () => void {
   return () => document.removeEventListener('visibilitychange', onVisible);
 }
 
-async function publish(topic: string, title: string, message: string, urgent: boolean): Promise<boolean> {
+type PublishResult = 'ok' | 'rate-limited' | 'failed';
+
+async function publish(
+  topic: string,
+  title: string,
+  message: string,
+  urgent: boolean
+): Promise<PublishResult> {
   try {
     // JSON publishing (instead of Title/Priority headers) so names and messages can contain any
     // characters; HTTP header values are limited to Latin-1.
@@ -137,20 +144,35 @@ async function publish(topic: string, title: string, message: string, urgent: bo
         tags: [urgent ? 'rotating_light' : 'bell'],
       }),
     });
-    return res.ok;
+    if (res.ok) return 'ok';
+    return res.status === 429 ? 'rate-limited' : 'failed';
   } catch {
-    return false;
+    return 'failed';
   }
 }
 
-// ntfy.sh allows short bursts, then about one message per 5 s per phone (250 a day). Fast taps are
-// all delivered in-app through Firestore; the closed-app push sends the first tap right away and
-// folds the rest of a burst into one follow-up ("+3 more").
-const PUSH_WINDOW_MS = 5000;
-let lastPushAt = 0;
-let pendingCount = 0;
-let pendingTimer: number | undefined;
-let pendingArgs: { topic: string; title: string; message: string; urgent: boolean } | null = null;
+// Every tap is its own notification on the partner's phone. The relay allows bursts of about
+// 60 messages and then roughly one every 5 s (250 a day per phone); only if it actually starts
+// refusing (HTTP 429) are the refused taps held back and delivered as one "+N more" message.
+let held: { topic: string; title: string; message: string; urgent: boolean; count: number } | null = null;
+let retryTimer: number | undefined;
+
+function scheduleRetry(): void {
+  if (retryTimer !== undefined) return;
+  retryTimer = window.setTimeout(async () => {
+    retryTimer = undefined;
+    const h = held;
+    if (!h) return;
+    held = null;
+    const text = h.count > 1 ? `${h.message} (+${h.count - 1} more)` : h.message;
+    const r = await publish(h.topic, h.title, text, h.urgent);
+    if (r === 'rate-limited') {
+      const newer = held as typeof h | null; // taps added while this retry was in flight
+      held = newer ? { ...newer, count: h.count + newer.count } : h;
+      scheduleRetry();
+    }
+  }, 6000);
+}
 
 export function sendClosedAppPush(
   partnerDeviceToken: string,
@@ -159,37 +181,21 @@ export function sendClosedAppPush(
   const topic = topicFromDeviceToken(partnerDeviceToken);
   if (!topic) return;
   const title = args.urgent ? `Priority from ${args.senderName}` : args.senderName;
-  const now = Date.now();
-
-  if (now - lastPushAt >= PUSH_WINDOW_MS && pendingTimer === undefined) {
-    lastPushAt = now;
-    void publish(topic, title, args.message, args.urgent);
+  if (held) {
+    // Already being throttled: add to the held batch instead of hammering the relay.
+    held = { ...held, message: args.message, urgent: held.urgent || args.urgent, count: held.count + 1 };
     return;
   }
-
-  pendingCount += 1;
-  pendingArgs = {
-    topic,
-    title,
-    message: args.message,
-    urgent: args.urgent || Boolean(pendingArgs?.urgent),
-  };
-  if (pendingTimer === undefined) {
-    pendingTimer = window.setTimeout(() => {
-      const p = pendingArgs;
-      const count = pendingCount;
-      pendingTimer = undefined;
-      pendingArgs = null;
-      pendingCount = 0;
-      lastPushAt = Date.now();
-      if (p) {
-        void publish(p.topic, p.title, count > 1 ? `${p.message} (+${count - 1} more)` : p.message, p.urgent);
-      }
-    }, Math.max(250, PUSH_WINDOW_MS - (now - lastPushAt)));
-  }
+  void publish(topic, title, args.message, args.urgent).then((r) => {
+    if (r !== 'rate-limited') return;
+    held = held
+      ? { ...held, count: held.count + 1, urgent: held.urgent || args.urgent }
+      : { topic, title, message: args.message, urgent: args.urgent, count: 1 };
+    scheduleRetry();
+  });
 }
 
 /** Sends a test notification to this phone's own topic. */
-export function sendTestPush(topic: string): Promise<boolean> {
-  return publish(topic, 'Notifye', "You're all set: your partner's taps will reach you even when Notifye is closed.", false);
+export async function sendTestPush(topic: string): Promise<boolean> {
+  return (await publish(topic, 'Notifye', "You're all set: your partner's taps will reach you even when Notifye is closed.", false)) === 'ok';
 }

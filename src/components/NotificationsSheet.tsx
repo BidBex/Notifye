@@ -57,7 +57,9 @@ export const NotificationsSheet: React.FC<NotificationsSheetProps> = ({
   useEffect(() => {
     if (!open || pings.length === 0) return;
     setNowMs(Date.now());
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    const id = window.setInterval(() => {
+      if (document.visibilityState === 'visible') setNowMs(Date.now());
+    }, 1000);
     return () => window.clearInterval(id);
   }, [open, pings.length]);
 

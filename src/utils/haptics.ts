@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+
 export type HapticPattern =
   | 'press'
   | 'tap'
@@ -35,9 +37,51 @@ export function getHapticIntensityLabel(intensityPercent: number): string {
   return 'Intense';
 }
 
+// iPhone's WebView has no Vibration API, so on iOS the native Taptic Engine is used instead.
+const IS_IOS_NATIVE = Capacitor.getPlatform() === 'ios';
+let iosHaptics: typeof import('@capacitor/haptics') | null = null;
+if (IS_IOS_NATIVE) {
+  void import('@capacitor/haptics').then((m) => {
+    iosHaptics = m;
+  });
+}
+
+function iosHaptic(pattern: HapticPattern, intensityPercent: number): boolean {
+  const m = iosHaptics;
+  if (!m) return false;
+  const { Haptics, ImpactStyle, NotificationType } = m;
+  const strong = intensityPercent > 130;
+  const gentle = intensityPercent <= 60;
+  switch (pattern) {
+    case 'press':
+      void Haptics.impact({ style: ImpactStyle.Light });
+      break;
+    case 'holdTick':
+      void Haptics.selectionChanged();
+      break;
+    case 'tap':
+      void Haptics.impact({ style: gentle ? ImpactStyle.Light : strong ? ImpactStyle.Heavy : ImpactStyle.Medium });
+      break;
+    case 'urgentSend':
+      void Haptics.notification({ type: NotificationType.Warning });
+      break;
+    case 'receive':
+      // A real buzz for an incoming tap (plus a crisp success tap on gentle settings)
+      if (gentle) void Haptics.notification({ type: NotificationType.Success });
+      else void Haptics.vibrate({ duration: strong ? 600 : 400 });
+      break;
+    case 'receiveUrgent':
+      void Haptics.vibrate({ duration: 600 });
+      window.setTimeout(() => void Haptics.notification({ type: NotificationType.Warning }), 650);
+      break;
+  }
+  return true;
+}
+
 export function triggerHaptic(pattern: HapticPattern, intensityPercent = 100): boolean {
   try {
     if (intensityPercent <= 0) return false;
+    if (IS_IOS_NATIVE) return iosHaptic(pattern, intensityPercent);
     if (typeof navigator === 'undefined' || typeof navigator.vibrate !== 'function') {
       return false;
     }
