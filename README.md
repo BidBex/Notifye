@@ -26,7 +26,14 @@ With a free Apple ID, an iPhone sideload stops opening after 7 days. Re-sign it,
 
 1. Touch and hold an empty part of the Home Screen (or the Lock Screen) and tap **+** (or **Customize**).
 2. Search for **Notifye** and pick a size.
-3. Tap the widget's button to notify your partner without opening the app. It uses the same colors as your in-app button.
+3. Tap the widget's button to notify your partner without opening the app. It is your in-app button: same text, second line, shape (orb, squircle or bloom) and colors. The medium size adds a **Priority** button.
+4. The widget shows each press:
+   - **While pressing:** the button sinks and darkens.
+   - **While sending:** iOS dims the button until the tap is delivered.
+   - **Sent:** a checkmark and a glowing ring for a few seconds (pink for priority), plus "Sent to …".
+   - **Afterwards:** "Last sent 14:05".
+
+   Change the button in **Customize** and the widget updates within a second.
 
 Tapping the widget never opens Notifye. iOS runs the send inside the Notifye app in the background, so it works even when re-signing removed the storage the app shares with its widget (an *App Group*). Without that shared storage, the widget can't show your partner's name or the "Sent" confirmation, but it still sends. Open Notifye once after installing so the widget has your pairing.
 

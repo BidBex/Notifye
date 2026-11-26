@@ -12,9 +12,16 @@ struct NotifyeTimelineEntry: TimelineEntry {
     let date: Date
     let state: NotifyeWidgetState
     let isPaired: Bool
+    /// "Sent to Ana", "Couldn't send…" (only for a few seconds after a tap)
     let lastStatus: String
     let showStatus: Bool
     let statusIsError: Bool
+    /// Last tap delivered from the widget (shown as "Last sent 14:05")
+    let lastSentAt: Date?
+    let lastSentUrgent: Bool
+
+    /// The button is in its "just sent" state (checkmark, glow ring).
+    var justSent: Bool { showStatus && !statusIsError }
 }
 
 private let kStatusVisibleSeconds: TimeInterval = 8
@@ -23,7 +30,8 @@ struct NotifyeProvider: TimelineProvider {
     func placeholder(in context: Context) -> NotifyeTimelineEntry {
         NotifyeTimelineEntry(
             date: Date(), state: .placeholder, isPaired: true,
-            lastStatus: "", showStatus: false, statusIsError: false
+            lastStatus: "", showStatus: false, statusIsError: false,
+            lastSentAt: nil, lastSentUrgent: false
         )
     }
 
@@ -36,14 +44,15 @@ struct NotifyeProvider: TimelineProvider {
         let entry = loadEntry(at: now)
         var entries = [entry]
         if entry.showStatus {
-            // Clear the "Sent" confirmation a few seconds later.
-            let lastSentMs = NotifyeShared.defaults?.double(forKey: NotifyeShared.lastSentKey) ?? 0
-            let clearAt = Date(timeIntervalSince1970: lastSentMs / 1000.0 + kStatusVisibleSeconds)
+            // Back to the normal button a few seconds after the tap.
+            let lastMs = NotifyeShared.defaults?.double(forKey: NotifyeShared.lastSentKey) ?? 0
+            let clearAt = Date(timeIntervalSince1970: lastMs / 1000.0 + kStatusVisibleSeconds)
             if clearAt > now {
                 entries.append(
                     NotifyeTimelineEntry(
                         date: clearAt, state: entry.state, isPaired: entry.isPaired,
-                        lastStatus: "", showStatus: false, statusIsError: false
+                        lastStatus: "", showStatus: false, statusIsError: false,
+                        lastSentAt: entry.lastSentAt, lastSentUrgent: entry.lastSentUrgent
                     )
                 )
             }
@@ -55,18 +64,21 @@ struct NotifyeProvider: TimelineProvider {
     private func loadEntry(at date: Date) -> NotifyeTimelineEntry {
         let defaults = NotifyeShared.defaults
         let state = NotifyeWidgetState.load() ?? .placeholder
-        let lastSentMs = defaults?.double(forKey: NotifyeShared.lastSentKey) ?? 0
-        let showStatus = (date.timeIntervalSince1970 * 1000.0 - lastSentMs) < kStatusVisibleSeconds * 1000
+        let lastMs = defaults?.double(forKey: NotifyeShared.lastSentKey) ?? 0
+        let showStatus = (date.timeIntervalSince1970 * 1000.0 - lastMs) < kStatusVisibleSeconds * 1000
         let status = showStatus ? (defaults?.string(forKey: NotifyeShared.lastStatusKey) ?? "") : ""
         let isError = status.hasPrefix("Couldn't") || status.hasPrefix("Open")
+        let successMs = defaults?.double(forKey: NotifyeShared.lastSuccessKey) ?? 0
         return NotifyeTimelineEntry(
             date: date, state: state, isPaired: state.isPaired,
-            lastStatus: status, showStatus: showStatus && !status.isEmpty, statusIsError: isError
+            lastStatus: status, showStatus: showStatus && !status.isEmpty, statusIsError: isError,
+            lastSentAt: successMs > 0 ? Date(timeIntervalSince1970: successMs / 1000.0) : nil,
+            lastSentUrgent: defaults?.bool(forKey: NotifyeShared.lastSuccessUrgentKey) ?? false
         )
     }
 }
 
-// MARK: - Views
+// MARK: - Look (mirrors ThinkOfMeButton in the app)
 
 @available(iOS 17.0, *)
 private struct Palette {
@@ -76,7 +88,7 @@ private struct Palette {
     let bg: Color
     let bgTop: Color
     let ink: Color
-    let isSquircle: Bool
+    let shape: String // orb | squircle | bloom
     let priority = Color(hex: "#FB7185")
 
     init(state: NotifyeWidgetState) {
@@ -84,17 +96,21 @@ private struct Palette {
         buttonTop = state.buttonTopHex.map { Color(hex: $0) } ?? accent.blend(with: .white, by: 0.1)
         buttonBottom = state.buttonBottomHex.map { Color(hex: $0) } ?? accent.blend(with: .black, by: 0.06)
         bg = Color(hex: state.backgroundColorHex)
-        bgTop = Color(hex: state.backgroundColorHex).blend(with: .white, by: 0.08)
+        bgTop = Color(hex: state.backgroundColorHex).blend(with: .white, by: 0.07)
         if let inkHex = state.buttonInkHex {
             ink = Color(hex: inkHex)
         } else {
             ink = accent.isLight ? Color(hex: "#0B0B0F") : .white
         }
-        isSquircle = state.buttonShape == "squircle"
+        shape = state.buttonShape ?? "orb"
     }
 
     var background: some View {
-        LinearGradient(colors: [bgTop, bg], startPoint: .top, endPoint: .bottom)
+        ZStack {
+            LinearGradient(colors: [bgTop, bg], startPoint: .top, endPoint: .bottom)
+            // soft aura behind the button, like the app's ambient glow
+            RadialGradient(colors: [accent.opacity(0.22), .clear], center: .center, startRadius: 4, endRadius: 110)
+        }
     }
 
     /// Same vertical gradient as the in-app button: top tint → colour at 60% → bottom tint.
@@ -108,6 +124,93 @@ private struct Palette {
             startPoint: .top,
             endPoint: .bottom
         )
+    }
+
+    func buttonShape(size: CGFloat) -> AnyShape {
+        shape == "squircle"
+            ? AnyShape(RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            : AnyShape(Circle())
+    }
+}
+
+/// Visible press feedback: the button sinks and darkens while the finger is on it.
+@available(iOS 17.0, *)
+private struct PressFeedbackStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.9 : 1)
+            .brightness(configuration.isPressed ? -0.08 : 0)
+            .animation(.spring(response: 0.22, dampingFraction: 0.6), value: configuration.isPressed)
+    }
+}
+
+/// The app's "Think of me" button, drawn natively. Shows three states:
+/// normal (label + sub-label), while sending (iOS dims it until the tap is delivered),
+/// and sent (checkmark + glowing ring for a few seconds).
+@available(iOS 17.0, *)
+private struct AppButtonFace: View {
+    let entry: NotifyeTimelineEntry
+    let palette: Palette
+    let size: CGFloat
+    var compact = false
+
+    var body: some View {
+        let shape = palette.buttonShape(size: size)
+        let sent = entry.justSent
+        let ringColor = entry.lastSentUrgent && sent ? palette.priority : palette.accent
+        ZStack {
+            // "sent" ring, like the ripple burst in the app
+            shape
+                .stroke(ringColor.opacity(sent ? 0.85 : 0), lineWidth: 3)
+                .frame(width: size + 12, height: size + 12)
+            if palette.shape == "bloom" {
+                Circle().stroke(palette.accent.opacity(0.5), lineWidth: 1).frame(width: size + 10, height: size + 10)
+            }
+            shape
+                .fill(palette.buttonFill)
+                .shadow(color: palette.accent.opacity(0.45), radius: size * 0.16, y: 2)
+            shape.stroke(
+                LinearGradient(colors: [.white.opacity(0.38), .clear], startPoint: .top, endPoint: .center),
+                lineWidth: 1
+            )
+            if palette.shape == "bloom" {
+                Circle().stroke(palette.ink.opacity(0.22), lineWidth: 1).padding(size * 0.06)
+            }
+            // top-left highlight, like the app's spotlight
+            shape
+                .fill(RadialGradient(colors: [.white.opacity(0.28), .clear], center: .init(x: 0.35, y: 0.25), startRadius: 1, endRadius: size * 0.6))
+
+            VStack(spacing: compact ? 1 : 3) {
+                if sent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: size * 0.3, weight: .bold))
+                        .transition(.scale.combined(with: .opacity))
+                    if !compact {
+                        Text(entry.lastSentUrgent ? "Priority sent" : "Sent")
+                            .font(.system(size: size * 0.12, weight: .semibold, design: .rounded))
+                    }
+                } else {
+                    Text(entry.state.buttonLabel)
+                        .font(.system(size: size * (compact ? 0.17 : 0.16), weight: .semibold, design: .serif))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.6)
+                    let sub = entry.state.buttonSubLabel ?? ""
+                    if !compact && !sub.isEmpty {
+                        Text(sub)
+                            .font(.system(size: size * 0.095, weight: .medium, design: .rounded))
+                            .opacity(0.85)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                }
+            }
+            .foregroundStyle(palette.ink)
+            .padding(size * 0.14)
+            .invalidatableContent() // dimmed by iOS while the tap is being sent
+        }
+        .frame(width: size, height: size)
+        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: sent)
     }
 }
 
@@ -127,6 +230,8 @@ private struct PartnerAvatar: View {
     }
 }
 
+// MARK: - Views
+
 @available(iOS 17.0, *)
 struct NotifyeWidgetView: View {
     @Environment(\.widgetFamily) var family
@@ -144,20 +249,111 @@ struct NotifyeWidgetView: View {
         }
     }
 
-    /// Always sends in place; never opens the app. The intent runs in the app process when the
-    /// widget itself can't see the pairing (see NotifyeIntent.swift).
-    private func tapToSend<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) { content() }
-            .buttonStyle(.plain)
+    /// Always sends in place; never opens the app.
+    private func sendButton<Content: View>(urgent: Bool, @ViewBuilder _ content: () -> Content) -> some View {
+        Button(intent: SendNotifyePingIntent(isUrgent: urgent)) { content() }
+            .buttonStyle(PressFeedbackStyle())
+    }
+
+    /// Status under the button: just-sent / error for a few seconds, then "Last sent 14:05".
+    @ViewBuilder
+    private func statusLine(fallback: String, leading: Bool = false) -> some View {
+        Group {
+            if entry.showStatus {
+                Text(entry.lastStatus)
+                    .foregroundStyle(entry.statusIsError ? palette.priority : palette.accent)
+                    .fontWeight(.semibold)
+            } else if let at = entry.lastSentAt {
+                Text("Last sent \(at, style: .time)")
+                    .foregroundStyle(.white.opacity(0.6))
+            } else {
+                Text(fallback)
+                    .foregroundStyle(.white.opacity(0.6))
+            }
+        }
+        .font(.system(size: 11, weight: .medium, design: .rounded))
+        .lineLimit(1)
+        .minimumScaleFactor(0.75)
+        .multilineTextAlignment(leading ? .leading : .center)
+        .contentTransition(.opacity)
+        .invalidatableContent()
+    }
+
+    // Home Screen: small — the app's button, front and centre
+    private var small: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                PartnerAvatar(name: partner, accent: palette.accent, size: 18)
+                Text(partner)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            GeometryReader { geo in
+                // Fits every iPhone's small widget (the ring needs ~6 pt on each side)
+                let size = max(56, min(92, min(geo.size.width, geo.size.height) - 12))
+                sendButton(urgent: entry.state.defaultUrgent) {
+                    AppButtonFace(entry: entry, palette: palette, size: size)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+            }
+            statusLine(fallback: entry.isPaired ? "Tap to notify" : "Open Notifye once")
+        }
+        .containerBackground(for: .widget) { palette.background }
+    }
+
+    // Home Screen: medium — big button + priority
+    private var medium: some View {
+        HStack(spacing: 14) {
+            GeometryReader { geo in
+                let size = max(64, min(116, geo.size.height - 12))
+                sendButton(urgent: false) {
+                    AppButtonFace(entry: entry, palette: palette, size: size)
+                }
+                .frame(width: geo.size.width, height: geo.size.height)
+            }
+            .aspectRatio(1, contentMode: .fit)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    PartnerAvatar(name: partner, accent: palette.accent, size: 28)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Notifye")
+                            .font(.system(size: 11, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.55))
+                        Text(partner)
+                            .font(.system(size: 16, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                }
+                statusLine(fallback: entry.isPaired ? "Tap the button to notify" : "Open Notifye once", leading: true)
+                Spacer(minLength: 0)
+                sendButton(urgent: true) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.2").font(.system(size: 13, weight: .bold))
+                        Text("Priority").font(.system(size: 13, weight: .semibold, design: .rounded))
+                    }
+                    .foregroundStyle(Color(hex: "#FDA4AF"))
+                    .frame(maxWidth: .infinity, minHeight: 38)
+                    .background(palette.priority.opacity(0.18), in: Capsule())
+                    .overlay(Capsule().stroke(palette.priority.opacity(0.45), lineWidth: 1))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .containerBackground(for: .widget) { palette.background }
     }
 
     // Lock Screen: round
     private var circular: some View {
-        tapToSend {
+        sendButton(urgent: entry.state.defaultUrgent) {
             ZStack {
                 AccessoryWidgetBackground()
-                Image(systemName: entry.showStatus && !entry.statusIsError ? "checkmark" : "bell.fill")
+                Image(systemName: entry.justSent ? "checkmark" : "bell.fill")
                     .font(.system(size: 20, weight: .semibold))
+                    .invalidatableContent()
             }
         }
         .widgetAccentable()
@@ -166,148 +362,33 @@ struct NotifyeWidgetView: View {
 
     // Lock Screen: wide
     private var rectangular: some View {
-        tapToSend {
+        sendButton(urgent: entry.state.defaultUrgent) {
             HStack(spacing: 8) {
-                Image(systemName: entry.showStatus && !entry.statusIsError ? "checkmark.circle.fill" : "bell.badge.fill")
+                Image(systemName: entry.justSent ? "checkmark.circle.fill" : "bell.badge.fill")
                     .font(.system(size: 22, weight: .semibold))
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(entry.isPaired ? "Notify \(partner)" : "Notifye")
+                    Text(entry.state.buttonLabel)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(entry.showStatus ? entry.lastStatus : (entry.isPaired ? "Tap to send" : "Tap to notify"))
-                        .font(.caption2)
-                        .lineLimit(1)
-                        .opacity(0.8)
+                    Group {
+                        if entry.showStatus {
+                            Text(entry.lastStatus)
+                        } else if let at = entry.lastSentAt {
+                            Text("Last sent \(at, style: .time)")
+                        } else {
+                            Text("Tap to notify \(partner)")
+                        }
+                    }
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .opacity(0.8)
                 }
                 Spacer(minLength: 0)
             }
+            .invalidatableContent()
         }
         .widgetAccentable()
         .containerBackground(.clear, for: .widget)
-    }
-
-    // Home Screen: small
-    private var small: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                PartnerAvatar(name: entry.isPaired ? partner : "N", accent: palette.accent, size: 22)
-                Text(entry.isPaired ? partner : "Notifye")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-
-            Spacer(minLength: 4)
-
-            tapToSend { sendCircle(diameter: 64) }
-
-            Spacer(minLength: 4)
-
-            statusLine(default: entry.isPaired ? entry.state.buttonLabel : "Tap to notify")
-        }
-        .containerBackground(for: .widget) { palette.background }
-    }
-
-    // Home Screen: medium
-    private var medium: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    PartnerAvatar(name: entry.isPaired ? partner : "N", accent: palette.accent, size: 30)
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Notifye")
-                            .font(.system(size: 11, weight: .semibold, design: .rounded))
-                            .foregroundStyle(.white.opacity(0.55))
-                        Text(entry.isPaired ? partner : "Your partner")
-                            .font(.system(size: 16, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 0)
-                statusLine(default: entry.isPaired ? "Tap to let them know" : "Tap to notify", alignLeading: true)
-            }
-
-            Spacer(minLength: 0)
-
-            HStack(spacing: 8) {
-                let normalTile = actionTile(
-                    icon: entry.showStatus && !entry.statusIsError ? "checkmark" : "bell.fill",
-                    title: entry.state.buttonLabel,
-                    fill: AnyShapeStyle(palette.buttonFill),
-                    ink: palette.ink,
-                    width: 84,
-                    stroke: .white.opacity(0.22)
-                )
-                let priorityTile = actionTile(
-                    icon: "exclamationmark.2",
-                    title: "Priority",
-                    fill: AnyShapeStyle(palette.priority.opacity(0.2)),
-                    ink: Color(hex: "#FDA4AF"),
-                    width: 66,
-                    stroke: palette.priority.opacity(0.45)
-                )
-                Button(intent: SendNotifyePingIntent(isUrgent: false)) { normalTile }
-                    .buttonStyle(.plain)
-                Button(intent: SendNotifyePingIntent(isUrgent: true)) { priorityTile }
-                    .buttonStyle(.plain)
-            }
-        }
-        .containerBackground(for: .widget) { palette.background }
-    }
-
-    private func sendCircle(diameter: CGFloat) -> some View {
-        let sent = entry.showStatus && !entry.statusIsError
-        let shape = palette.isSquircle
-            ? AnyShape(RoundedRectangle(cornerRadius: diameter * 0.3, style: .continuous))
-            : AnyShape(Circle())
-        return ZStack {
-            shape
-                .fill(palette.buttonFill)
-                .shadow(color: palette.accent.opacity(0.4), radius: 12, y: 2)
-            shape.stroke(
-                LinearGradient(colors: [.white.opacity(0.4), .clear], startPoint: .top, endPoint: .center),
-                lineWidth: 1
-            )
-            Image(systemName: sent ? "checkmark" : "bell.badge.fill")
-                .font(.system(size: diameter * 0.32, weight: .bold))
-                .foregroundStyle(palette.ink)
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .frame(width: diameter, height: diameter)
-    }
-
-    private func actionTile(
-        icon: String, title: String, fill: AnyShapeStyle, ink: Color, width: CGFloat, stroke: Color = .clear
-    ) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 20, weight: .bold))
-                .contentTransition(.symbolEffect(.replace))
-            Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        .foregroundStyle(ink)
-        .frame(width: width)
-        .frame(maxHeight: .infinity)
-        .background(fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(stroke, lineWidth: 1))
-    }
-
-    private func statusLine(default text: String, alignLeading: Bool = false) -> some View {
-        Text(entry.showStatus ? entry.lastStatus : text)
-            .font(.system(size: 11, weight: entry.showStatus ? .semibold : .medium, design: .rounded))
-            .foregroundStyle(
-                entry.showStatus
-                    ? (entry.statusIsError ? Color(hex: "#FDA4AF") : palette.accent)
-                    : .white.opacity(0.6)
-            )
-            .lineLimit(alignLeading ? 2 : 1)
-            .minimumScaleFactor(0.8)
-            .multilineTextAlignment(alignLeading ? .leading : .center)
     }
 }
 
@@ -320,7 +401,7 @@ struct NotifyeQuickButtonWidget: Widget {
             NotifyeWidgetView(entry: entry)
         }
         .configurationDisplayName("Notify Partner")
-        .description("Tap to send a notification to your partner without opening the app.")
+        .description("Your Notifye button. Tap it to notify your partner without opening the app.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular])
     }
 }

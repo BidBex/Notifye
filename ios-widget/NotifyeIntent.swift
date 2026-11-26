@@ -25,6 +25,7 @@ struct NotifyeWidgetState: Codable {
     var buttonBottomHex: String? = nil
     var buttonInkHex: String? = nil
     var buttonShape: String? = nil
+    var buttonSubLabel: String? = nil
     /// Partner's ntfy topic for notifications while their app is closed ('' / nil if off).
     var partnerPushTopic: String? = nil
 
@@ -94,6 +95,7 @@ struct SendNotifyePingIntent: LiveActivityIntent {
             try await commitFirestorePing(state: state, idToken: idToken, isUrgent: isUrgent)
             await sendClosedAppPush(state: state, isUrgent: isUrgent)
             NotifyeShared.setStatus(isUrgent ? "Priority sent to \(state.partnerName)" : "Sent to \(state.partnerName)")
+            NotifyeShared.markSent(urgent: isUrgent)
         } catch {
             NotifyeShared.setStatus("Couldn't send · check internet")
         }

@@ -20,6 +20,8 @@ export interface WidgetSyncPayload {
   partnerName: string;
   memberUids: string[];
   buttonLabel: string;
+  /** Second line on the button ("Tap to notify"), same as in the app. */
+  buttonSubLabel: string;
   buttonColorHex: string;
   backgroundColorHex: string;
   normalMessage: string;
@@ -80,6 +82,7 @@ export async function syncNativeWidgetState(params: {
     partnerName,
     memberUids: isActive && pair ? pair.memberUids : [],
     buttonLabel: themePrefs.buttonLabel || 'Think of me',
+    buttonSubLabel: themePrefs.buttonSubLabel.trim(),
     buttonColorHex: buttonColor,
     backgroundColorHex: themePrefs.backgroundColor || '#0B0B0F',
     normalMessage: normalPingMessage(themePrefs),
