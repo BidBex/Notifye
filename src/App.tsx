@@ -35,6 +35,7 @@ import type {
   UserProfile,
 } from './types';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { ClosedAppPrompt } from './components/ClosedAppPrompt';
 import { NameSetupView } from './components/NameSetupView';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import { PairedStudio } from './components/PairedStudio';
@@ -520,6 +521,22 @@ function TetherWorkspace() {
       updatedAt: serverTimestamp(),
     }).catch(() => undefined);
   }, [fbUid, activePairId, pairMembersKey, closedAppPushEnabled]);
+
+  const [closedAppPromptDismissed, setClosedAppPromptDismissed] = useState(() => {
+    try {
+      return localStorage.getItem('notifye_push_prompt_dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissClosedAppPrompt = useCallback(() => {
+    setClosedAppPromptDismissed(true);
+    try {
+      localStorage.setItem('notifye_push_prompt_dismissed', '1');
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
 
   const handleSetClosedAppPush = useCallback((enabled: boolean) => {
     setClosedAppPushEnabled(enabled);
@@ -1198,6 +1215,17 @@ function TetherWorkspace() {
           onOpenIpaExport={isNativeApp ? undefined : () => setShowIpaExportSheet(true)}
           busy={pairBusy}
           error={pairError}
+        />
+      )}
+
+      {showStudio && isActivePair && !closedAppPushEnabled && !closedAppPromptDismissed && !showNotificationsSheet && (
+        <ClosedAppPrompt
+          accentColor={ambientPalette.effectiveButton}
+          onOpen={() => {
+            dismissClosedAppPrompt();
+            setShowNotificationsSheet(true);
+          }}
+          onDismiss={dismissClosedAppPrompt}
         />
       )}
 

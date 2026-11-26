@@ -74,6 +74,55 @@ export function ntfySubscribeLink(topic: string): string {
   return `ntfy://ntfy.sh/${topic}?display=Notifye`;
 }
 
+export const ntfyStoreUrl = (): string =>
+  Capacitor.getPlatform() === 'android' ? NTFY_PLAY_STORE_URL : NTFY_APP_STORE_URL;
+
+/** Opens an app store page or other external link from inside the app. */
+export async function openExternal(url: string): Promise<boolean> {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      const { AppLauncher } = await import('@capacitor/app-launcher');
+      return (await AppLauncher.openUrl({ url })).completed;
+    } catch {
+      return false;
+    }
+  }
+  return window.open(url, '_blank', 'noopener') !== null;
+}
+
+/**
+ * Android only: opens ntfy straight on this phone's topic, which subscribes to it.
+ * Returns false when ntfy isn't installed (the ntfy:// link has nothing to open).
+ */
+export async function openNtfySubscription(topic: string): Promise<boolean> {
+  if (Capacitor.getPlatform() !== 'android') return false;
+  return openExternal(ntfySubscribeLink(topic));
+}
+
+/** Calls `onResume` each time the user comes back to Notifye (e.g. from ntfy or the store). */
+export function onAppResume(onResume: () => void): () => void {
+  if (Capacitor.isNativePlatform()) {
+    let remove: (() => void) | null = null;
+    let cancelled = false;
+    void import('@capacitor/app').then(async ({ App }) => {
+      const handle = await App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) onResume();
+      });
+      if (cancelled) void handle.remove();
+      else remove = () => void handle.remove();
+    });
+    return () => {
+      cancelled = true;
+      remove?.();
+    };
+  }
+  const onVisible = () => {
+    if (document.visibilityState === 'visible') onResume();
+  };
+  document.addEventListener('visibilitychange', onVisible);
+  return () => document.removeEventListener('visibilitychange', onVisible);
+}
+
 async function publish(topic: string, title: string, message: string, urgent: boolean): Promise<boolean> {
   try {
     // JSON publishing (instead of Title/Priority headers) so names and messages can contain any
@@ -142,5 +191,5 @@ export function sendClosedAppPush(
 
 /** Sends a test notification to this phone's own topic. */
 export function sendTestPush(topic: string): Promise<boolean> {
-  return publish(topic, 'Notifye', 'Closed-app notifications are working.', false);
+  return publish(topic, 'Notifye', "You're all set: your partner's taps will reach you even when Notifye is closed.", false);
 }
