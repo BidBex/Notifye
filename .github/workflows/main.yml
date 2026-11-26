@@ -170,7 +170,9 @@ jobs:
             npx cap add android
           fi
           # Full-screen (immersive) activity
-          cp android-native/MainActivity.java android/app/src/main/java/com/notifye/app/MainActivity.java
+          # Native code: full-screen activity, background listener service, plugin, boot receiver
+          cp android-native/*.java android/app/src/main/java/com/notifye/app/
+          python3 android-native/patch-manifest.py android/app/src/main/AndroidManifest.xml
           npx cap sync android
 
       - name: Set Android app icon
