@@ -430,19 +430,19 @@ struct NotifyeWidgetView: View {
                 Spacer(minLength: 0)
             }
 
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
 
             if entry.isPaired {
                 Button(intent: SendNotifyePingIntent(isUrgent: entry.state.defaultUrgent)) {
-                    sendCircle(diameter: 78)
+                    sendCircle(diameter: 64)
                 }
                 .buttonStyle(.plain)
             } else {
                 // No shared state yet: tapping opens Notifye, which sends the notification.
-                sendCircle(diameter: 78)
+                sendCircle(diameter: 64)
             }
 
-            Spacer(minLength: 6)
+            Spacer(minLength: 4)
 
             statusLine(default: entry.isPaired ? entry.state.buttonLabel : "Tap to send via app")
         }
@@ -569,7 +569,6 @@ struct NotifyeQuickButtonWidget: Widget {
         .configurationDisplayName("Notify Partner")
         .description("Tap to send a notification to your partner without opening the app.")
         .supportedFamilies([.systemSmall, .systemMedium, .accessoryCircular, .accessoryRectangular])
-        .contentMarginsDisabled()
     }
 }
 

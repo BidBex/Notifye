@@ -18,21 +18,29 @@ export function subscribeToWidgetLinks(onAction: (action: WidgetLinkAction) => v
   if (!Capacitor.isNativePlatform()) return () => {};
   let cancelled = false;
   let removeListener: (() => void) | null = null;
+  // On a cold start iOS reports the same link twice (launch URL + retained appUrlOpen event).
+  let lastUrl = '';
+  let lastAt = 0;
+  const handle = (url: string) => {
+    const action = parseNotifyeLink(url);
+    if (!action || cancelled) return;
+    const now = Date.now();
+    if (url === lastUrl && now - lastAt < 3000) return;
+    lastUrl = url;
+    lastAt = now;
+    onAction(action);
+  };
 
   void import('@capacitor/app').then(async ({ App }) => {
     if (cancelled) return;
-    const handle = await App.addListener('appUrlOpen', ({ url }) => {
-      const action = parseNotifyeLink(url);
-      if (action) onAction(action);
-    });
-    removeListener = () => void handle.remove();
+    const listener = await App.addListener('appUrlOpen', ({ url }) => handle(url));
+    removeListener = () => void listener.remove();
     if (cancelled) {
       removeListener();
       return;
     }
     const launch = await App.getLaunchUrl();
-    const action = launch?.url ? parseNotifyeLink(launch.url) : null;
-    if (action && !cancelled) onAction(action);
+    if (launch?.url) handle(launch.url);
   });
 
   return () => {
