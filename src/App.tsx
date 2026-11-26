@@ -11,6 +11,7 @@ import {
   onSnapshot,
   query,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
   writeBatch,
@@ -42,6 +43,15 @@ import { WidgetStandaloneView } from './components/WidgetStandaloneView';
 import { playWarmChime } from './utils/chime';
 import { triggerHaptic } from './utils/haptics';
 import { loadThemePrefs, resolveAmbientPalette, saveThemePrefs } from './utils/themeColors';
+import {
+  devicePlatform,
+  getReceiveTopic,
+  isClosedAppPushEnabled,
+  sendClosedAppPush,
+  setClosedAppPushEnabled,
+  toDeviceToken,
+  topicFromDeviceToken,
+} from './utils/closedAppPush';
 import { subscribeToWidgetLinks } from './utils/deepLinks';
 import { ensureNativeNotificationPermission } from './utils/nativeNotifications';
 import { syncNativeWidgetState } from './utils/widgetBridge';
@@ -496,6 +506,26 @@ function TetherWorkspace() {
     };
   }, [authReady, fbUid, activePairId]);
 
+  // Closed-app notifications (ntfy): share this phone's receive topic with the partner.
+  const [closedAppPushEnabled, setClosedAppPushEnabledState] = useState(isClosedAppPushEnabled);
+  const pairMembersKey = pair && pair.status === 'active' ? pair.memberUids.join(',') : '';
+  useEffect(() => {
+    if (!fbUid || !activePairId || !pairMembersKey) return;
+    void setDoc(doc(db, 'pairs', activePairId, 'devices', fbUid), {
+      uid: fbUid,
+      pairId: activePairId,
+      memberUids: pairMembersKey.split(','),
+      fcmToken: closedAppPushEnabled ? toDeviceToken(getReceiveTopic()) : '',
+      platform: devicePlatform(),
+      updatedAt: serverTimestamp(),
+    }).catch(() => undefined);
+  }, [fbUid, activePairId, pairMembersKey, closedAppPushEnabled]);
+
+  const handleSetClosedAppPush = useCallback((enabled: boolean) => {
+    setClosedAppPushEnabled(enabled);
+    setClosedAppPushEnabledState(enabled);
+  }, []);
+
   // Ask once for notification permission in the native app as soon as a pair is active.
   useEffect(() => {
     if (activePairId) void ensureNativeNotificationPermission();
@@ -854,6 +884,12 @@ function TetherWorkspace() {
       );
       window.clearTimeout(feedbackTimerRef.current);
       feedbackTimerRef.current = window.setTimeout(() => setLastSentFeedback(null), 2600);
+      // Reaches the partner even when Notifye is closed, if they turned on ntfy notifications.
+      sendClosedAppPush(partnerDeviceToken, {
+        senderName: profile.displayName,
+        message: cleanMessage,
+        urgent: options.kind === 'urgent_attention',
+      });
       try {
         const pingId = generateReverseTimestampId(fbUser.uid);
         pingAnchorMsRef.current.set(pingId, Date.now());
@@ -890,18 +926,6 @@ function TetherWorkspace() {
 
         await batch.commit();
 
-        if (partnerDeviceToken) {
-          void fetch('/api/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              targetToken: partnerDeviceToken,
-              senderName: profile.displayName,
-              message: cleanMessage,
-              pairId: pair.pairId,
-            }),
-          }).catch(() => undefined);
-        }
       } catch (err) {
         setPingError(err instanceof Error ? err.message : 'Could not send attention ping.');
       } finally {
@@ -922,10 +946,11 @@ function TetherWorkspace() {
         profile,
         pair,
         themePrefs,
+        partnerPushTopic: topicFromDeviceToken(partnerDeviceToken) ?? '',
       });
     }, 600);
     return () => window.clearTimeout(t);
-  }, [authReady, fbUser, profile, pair, themePrefs]);
+  }, [authReady, fbUser, profile, pair, themePrefs, partnerDeviceToken]);
 
   // Widget taps that open the app (notifye://send) queue the same action as ?widgetAction=.
   const [widgetActionTick, setWidgetActionTick] = useState(0);
@@ -1207,6 +1232,10 @@ function TetherWorkspace() {
               setShowNotificationsSheet(false);
               handlePreviewAlert(urgent);
             }}
+            closedAppPushEnabled={closedAppPushEnabled}
+            onSetClosedAppPush={handleSetClosedAppPush}
+            partnerHasClosedAppPush={Boolean(topicFromDeviceToken(partnerDeviceToken))}
+            partnerName={partnerDisplayName}
           />
         )}
 

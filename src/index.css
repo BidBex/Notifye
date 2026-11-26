@@ -15,7 +15,8 @@
     overflow-x: hidden;
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
-    overscroll-behavior-y: none;
+    /* No overscroll-behavior here: with overflow-x: hidden, body becomes a scroll container
+       and overscroll-behavior: none on it blocked touch scrolling of the page entirely. */
   }
 
   button,
