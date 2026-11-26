@@ -34,12 +34,11 @@ To show your partner's name and send in the background, the widget reads the pai
 
 - **While the app is open:** a banner, a sound and a vibration.
 - **While the app is in the background:** a system notification, for as long as the phone keeps the app running.
-- **When the app is fully closed (free, iPhone and Android):** set this up once in **Notifications → Notifications when the app is closed**:
-  1. Install the free **ntfy** app ([App Store](https://apps.apple.com/app/ntfy/id1625396347), [Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy)).
-  2. Subscribe to your private topic. On Android, tap **Subscribe**. On iPhone, copy the topic, then in ntfy tap **+**, paste it and tap **Subscribe**.
-  3. Tap **Send test**, then switch on **Get your partner's taps through ntfy**.
+- **When the app is fully closed (free, iPhone and Android):** after pairing, Notifye suggests turning this on. You can also find it any time under **Notifications → Notify me when Notifye is closed**. Tap **Turn on**:
+  - **Android:** ntfy opens already subscribed. If ntfy isn't installed, Google Play opens first, and ntfy opens by itself when you come back. Back in Notifye, a test notification is sent automatically.
+  - **iPhone:** your private code is copied. Open ntfy, tap **+**, paste and tap **Subscribe**. Back in Notifye, a test notification is sent automatically. The ntfy iPhone app doesn't accept subscribe links from other apps, so this one paste can't be automated.
 
-  Each person does this on their own phone. After that, every tap also goes to the partner's ntfy topic, and ntfy shows it as a normal notification even when Notifye is closed. During a burst of fast taps, the first tap arrives right away and the rest are combined into one follow-up ("+3 more"), because ntfy.sh allows about one message every 5 seconds and 250 a day per phone.
+  Each person does this once on their own phone. After that, every tap also goes to the partner's ntfy, which shows it even when Notifye is closed. During a burst of fast taps, the first tap arrives right away and the rest are combined into one follow-up ("+3 more"), because ntfy.sh allows about one message every 5 seconds and 250 a day per phone.
 
 ## How it works
 
