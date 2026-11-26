@@ -120,7 +120,9 @@ export const ClosedAppNotificationsCard: React.FC<ClosedAppNotificationsCardProp
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-zinc-100">Notify me when Notifye is closed</h3>
           <p className="text-xs text-zinc-400 leading-relaxed">
-            Free, no account. Delivered by the ntfy app.
+            {Capacitor.getPlatform() === 'ios'
+              ? 'Notifye already checks for taps in the background now and then (iOS decides when). For instant alerts, turn on ntfy: free, no account.'
+              : 'Free, no account. Delivered by the ntfy app.'}
           </p>
         </div>
         {enabled && phase === 'idle' && (
