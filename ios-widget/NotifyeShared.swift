@@ -53,6 +53,18 @@ enum NotifyeShared {
         UserDefaults.standard.removeObject(forKey: stateKey)
     }
 
+    static let lastSuccessKey = "notifye_widget_last_success_ms"
+    static let lastSuccessUrgentKey = "notifye_widget_last_success_urgent"
+
+    /// A widget tap was delivered: remembered so the widget can show "Last sent 14:05".
+    static func markSent(urgent: Bool) {
+        let now = Date().timeIntervalSince1970 * 1000.0
+        for store in [defaults, UserDefaults.standard].compactMap({ $0 }) {
+            store.set(now, forKey: lastSuccessKey)
+            store.set(urgent, forKey: lastSuccessUrgentKey)
+        }
+    }
+
     /// Status shown on the widget after a tap ("Sent to …").
     static func setStatus(_ status: String) {
         let now = Date().timeIntervalSince1970 * 1000.0
