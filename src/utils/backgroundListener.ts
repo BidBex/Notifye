@@ -1,7 +1,8 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 
 /**
- * Android only: Notifye's own background service (android-native/NotifyeListenerService.java)
+ * Notifye's own background listener (Android: android-native/NotifyeListenerService.java,
+ * iPhone: ios-widget/NotifyeLiveListener.swift)
  * keeps a connection open to this phone's private relay channel and shows the partner's taps
  * as Notifye notifications, even when the app is closed. Nothing else needs to be installed.
  */
@@ -13,8 +14,10 @@ interface NotifyeListenerPlugin {
 
 const NotifyeListener = registerPlugin<NotifyeListenerPlugin>('NotifyeListener');
 
-const available = () =>
-  Capacitor.getPlatform() === 'android' && Capacitor.isPluginAvailable('NotifyeListener');
+const available = () => Capacitor.isNativePlatform() && Capacitor.isPluginAvailable('NotifyeListener');
+
+/** True when the native listener shows background notifications (so JS must not duplicate them). */
+export const nativeListenerAvailable = available;
 
 export async function startBackgroundListener(topic: string, partnerName: string): Promise<void> {
   if (!available()) return;

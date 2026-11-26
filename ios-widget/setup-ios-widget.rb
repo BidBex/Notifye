@@ -17,7 +17,7 @@ app_group = project.main_group.find_subpath('App', true)
 bridge_dir = 'ios/App/App'
 APP_SWIFT_FILES = %w[
   NotifyeWidgetBridge.swift NotifyeBridgeViewController.swift NotifyeShared.swift
-  NotifyeIntent.swift NotifyeBackgroundCheck.swift
+  NotifyeIntent.swift NotifyeBackgroundCheck.swift NotifyeLiveListener.swift
 ].freeze
 # AppDelegate with the background check (replaces the generated one, already in the target)
 FileUtils.cp('ios-widget/AppDelegate.swift', "#{bridge_dir}/AppDelegate.swift")
@@ -64,7 +64,8 @@ end
 # Background check (NotifyeBackgroundCheck.swift) needs background fetch + a permitted task ID
 info_path = "#{bridge_dir}/Info.plist"
 info = Xcodeproj::Plist.read_from_path(info_path)
-info['UIBackgroundModes'] = (Array(info['UIBackgroundModes']) | ['fetch'])
+# fetch: background check; audio: silent keep-alive for the live listener (NotifyeLiveListener)
+info['UIBackgroundModes'] = (Array(info['UIBackgroundModes']) | %w[fetch audio])
 info['BGTaskSchedulerPermittedIdentifiers'] =
   (Array(info['BGTaskSchedulerPermittedIdentifiers']) | ['com.notifye.app.refresh'])
 Xcodeproj::Plist.write_to_path(info, info_path)
