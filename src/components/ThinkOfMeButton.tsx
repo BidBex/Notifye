@@ -40,6 +40,7 @@ const FINE_POINTER =
   typeof window !== 'undefined' &&
   typeof window.matchMedia === 'function' &&
   window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+const TOUCH_PRESS_TRANSITION = { type: 'tween' as const, duration: 0.12, ease: 'easeOut' as const };
 const SPARK_ANGLES = Array.from({ length: 12 }, (_, i) => (i * 30 * Math.PI) / 180);
 
 export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
@@ -252,6 +253,11 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
   const displayLabel = label.trim() || 'Think of me';
   const labelWords = displayLabel.split(/\s+/);
 
+  // Touch: a plain press-scale. Android WebView randomly dropped half of the button when a
+  // scaled, rounded, overflow-clipped element had animated children (compositor tiling bug),
+  // so on touch the button has no clipping, no inner layers and no keyframed scale.
+  const touchPressAnimate = prefersReducedMotion ? undefined : { scale: isPressed ? 0.94 : 1 };
+
   const getButtonMotionAnimate = () => {
     if (prefersReducedMotion) return undefined;
 
@@ -387,13 +393,13 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
         onPointerCancel={handlePointerCancelOrLeave}
         onPointerLeave={handlePointerCancelOrLeave}
         onClick={handleKeyboardClick}
-        animate={getButtonMotionAnimate()}
-        transition={getButtonTransition()}
-        className={`relative z-10 overflow-hidden ${dimensionClass} ${radiusClass} flex flex-col items-center justify-center gap-1.5 px-5 text-center focus-visible:outline-2 focus-visible:outline-offset-4 disabled:opacity-75 cursor-pointer touch-none`}
+        animate={FINE_POINTER ? getButtonMotionAnimate() : touchPressAnimate}
+        transition={FINE_POINTER ? getButtonTransition() : TOUCH_PRESS_TRANSITION}
+        className={`relative z-10 ${FINE_POINTER ? 'overflow-hidden' : ''} ${dimensionClass} ${radiusClass} flex flex-col items-center justify-center gap-1.5 px-5 text-center focus-visible:outline-2 focus-visible:outline-offset-4 disabled:opacity-75 cursor-pointer touch-none`}
         style={{
-          rotateX: prefersReducedMotion || !FINE_POINTER ? 0 : rotateX,
-          rotateY: prefersReducedMotion || !FINE_POINTER ? 0 : rotateY,
-          transformStyle: FINE_POINTER ? 'preserve-3d' : undefined,
+          ...(FINE_POINTER && !prefersReducedMotion
+            ? { rotateX, rotateY, transformStyle: 'preserve-3d' as const }
+            : {}),
           background: `linear-gradient(180deg, ${topTint} 0%, ${color} 60%, ${bottomTint} 100%)`,
           color: inkColor,
           boxShadow: !FINE_POINTER
@@ -407,7 +413,7 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
       >
         {/* Inner Touch Wave Pulse While Finger Is On Button */}
         <AnimatePresence>
-          {isPressed && !prefersReducedMotion && (
+          {FINE_POINTER && isPressed && !prefersReducedMotion && (
             <motion.span
               key={`inner_${touchPulseKey}`}
               aria-hidden="true"
@@ -422,7 +428,7 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
         </AnimatePresence>
 
         {/* Dynamic Finger/Pointer Spotlight */}
-        {!prefersReducedMotion && (
+        {FINE_POINTER && !prefersReducedMotion && (
           <motion.span
             aria-hidden="true"
             animate={{ opacity: isHovering || isPressed ? 1 : 0.35 }}
@@ -443,10 +449,9 @@ export const ThinkOfMeButton: React.FC<ThinkOfMeButtonProps> = ({
         {/* Parallax Kinetic Text Layer */}
         <motion.div
           className="relative z-10 flex flex-col items-center justify-center gap-1.5"
-          style={{
-            x: prefersReducedMotion || !FINE_POINTER ? 0 : contentShiftX,
-            y: prefersReducedMotion || !FINE_POINTER ? 0 : contentShiftY,
-          }}
+          style={
+            FINE_POINTER && !prefersReducedMotion ? { x: contentShiftX, y: contentShiftY } : undefined
+          }
         >
           {/* Staggered Word Wave on Click + Gentle Press Dip */}
           <motion.span
